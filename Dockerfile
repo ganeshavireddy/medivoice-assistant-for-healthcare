@@ -1,6 +1,5 @@
 FROM python:3.12-slim
 
-# Set working directory
 WORKDIR /app
 
 # Install system dependencies
@@ -11,19 +10,18 @@ RUN apt-get update && apt-get install -y \
 
 # Create app user
 RUN useradd -m appuser
-USER appuser
 
-# Copy requirements and install Python dependencies
-COPY --chown=appuser:appuser backend/requirements.txt .
+# Install Python dependencies globally
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code with ownership
 COPY --chown=appuser:appuser backend/ ./backend/
 
-# Expose FastAPI port
+USER appuser
+
 EXPOSE 8000
 
-# Environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/backend
 
