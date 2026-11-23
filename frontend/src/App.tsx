@@ -56,7 +56,11 @@ interface ChatMessage {
   isEmergency?: boolean;
 }
 
-const API_HOST = (import.meta.env.VITE_API_URL ? (import.meta.env.VITE_API_URL as string).replace(/\/$/, '') : '');
+let rawApiHost = (import.meta.env.VITE_API_URL as string || '').trim().replace(/\/$/, '');
+if (rawApiHost && !rawApiHost.startsWith('http://') && !rawApiHost.startsWith('https://')) {
+  rawApiHost = `https://${rawApiHost}`;
+}
+const API_HOST = rawApiHost;
 const API_BASE = `${API_HOST}/api/v1`;
 
 // ---------------------------------------------------------------------------
