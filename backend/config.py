@@ -26,10 +26,16 @@ POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 
 # Database URL
-SQLALCHEMY_DATABASE_URL = (
-    f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    SQLALCHEMY_DATABASE_URL = DATABASE_URL
+else:
+    SQLALCHEMY_DATABASE_URL = (
+        f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
+        f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+    )
 
 # ChromaDB Configuration
 CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_db")

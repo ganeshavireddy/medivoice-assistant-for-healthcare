@@ -6,6 +6,7 @@ All models are defined here in one file to avoid import chain issues.
 """
 
 import logging
+import os
 from datetime import datetime
 
 from sqlalchemy import (
@@ -32,11 +33,22 @@ try:
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
     logger.info("Connected to PostgreSQL database")
-except Exception:
-    # Fallback to SQLite
-    SQLITE_URL = "sqlite:///./medivoice.db"
-    engine = create_engine(SQLITE_URL)
-    logger.info("PostgreSQL unavailable — using SQLite fallback")
+except Exception as e:
+    # Fallback to SQLite in a guaranteed writable path
+    db_file = os.getenv("SQLITE_DB_PATH")
+    if not db_file:
+        if os.path.exists("/app"):
+            db_file = "/app/backend/data/medivoice.db"
+        else:
+            db_file = "./medivoice.db"
+
+    db_dir = os.path.dirname(os.path.abspath(db_file))
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    SQLITE_URL = f"sqlite:///{db_file}"
+    engine = create_engine(SQLITE_URL, connect_args={"check_same_thread": False})
+    logger.info(f"PostgreSQL unavailable ({e}) — using SQLite fallback at {SQLITE_URL}")
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

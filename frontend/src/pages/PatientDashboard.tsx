@@ -28,7 +28,8 @@ export default function PatientDashboard() {
   const [reports, setReports] = useState<Report[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [voiceText, setVoiceText] = useState("");
-  const [apiBase] = useState(import.meta.env.VITE_API_BASE_URL || "http://localhost:8000");
+  const rawApi = ((import.meta.env.VITE_API_URL as string) || (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:8000").trim().replace(/\/$/, "");
+  const [apiBase] = useState(rawApi && !rawApi.startsWith("http://") && !rawApi.startsWith("https://") ? `https://${rawApi}` : rawApi);
 
   // Fetch appointments
   useEffect(() => {

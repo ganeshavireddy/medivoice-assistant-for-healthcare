@@ -20,7 +20,8 @@ export default function DoctorDirectory() {
   const [specialization, setSpecialization] = useState("");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [loading, setLoading] = useState(false);
-  const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+  const rawApi = ((import.meta.env.VITE_API_URL as string) || (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:8000").trim().replace(/\/$/, "");
+  const apiBase = rawApi && !rawApi.startsWith("http://") && !rawApi.startsWith("https://") ? `https://${rawApi}` : rawApi;
 
   const searchDoctors = async () => {
     setLoading(true);

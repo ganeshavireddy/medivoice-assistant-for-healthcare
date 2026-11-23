@@ -101,7 +101,7 @@ def create_app() -> FastAPI:
     # Mount MCP sub-app
     app.mount("/api/mcp", mcp_app)
 
-    @app.get("/")
+    @app.api_route("/", methods=["GET", "HEAD"])
     async def root():
         return {
             "name": "MediVoice AI",
@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
             "docs": "/docs",
         }
 
-    @app.get("/health")
+    @app.api_route("/health", methods=["GET", "HEAD"])
     async def health():
         return {"status": "healthy"}
 

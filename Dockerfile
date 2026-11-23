@@ -18,12 +18,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code with ownership
 COPY --chown=appuser:appuser backend/ ./backend/
 
+# Create data directories and ensure appuser owns /app and all subdirectories
+RUN mkdir -p /app/backend/data /app/chroma_db /app/uploads/reports && chown -R appuser:appuser /app
+
 USER appuser
 
 EXPOSE 8000
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/backend
+ENV CHROMA_DB_PATH=/app/chroma_db
 
 # Start the application binding to Render $PORT dynamically
 CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
