@@ -56,7 +56,8 @@ interface ChatMessage {
   isEmergency?: boolean;
 }
 
-const API_BASE = '/api/v1';
+const API_HOST = (import.meta.env.VITE_API_URL ? (import.meta.env.VITE_API_URL as string).replace(/\/$/, '') : '');
+const API_BASE = `${API_HOST}/api/v1`;
 
 // ---------------------------------------------------------------------------
 // STRUCTURED MESSAGE FORMATTER
@@ -587,7 +588,7 @@ export default function App() {
 
   // Health check
   useEffect(() => {
-    fetch('/health')
+    fetch(`${API_HOST}/health`)
       .then((res) => (res.ok ? setBackendOnline(true) : setBackendOnline(false)))
       .catch(() => setBackendOnline(false));
   }, []);
@@ -663,7 +664,8 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.audio_url) {
-          const audio = new Audio(data.audio_url);
+          const audioUrl = data.audio_url.startsWith('http') ? data.audio_url : `${API_HOST}${data.audio_url}`;
+          const audio = new Audio(audioUrl);
           currentAudioRef.current = audio;
 
           audio.onplay = () => {

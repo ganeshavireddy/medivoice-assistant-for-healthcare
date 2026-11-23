@@ -3,13 +3,14 @@ FROM node:22-alpine AS build
 WORKDIR /app
 
 # Copy package files
-COPY --chown=node:node frontend/package.json frontend/package-lock.json* 2>/dev/null ./
+COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 
-# Copy source code
-COPY --chown=node:node frontend/src ./src
-COPY --chown=node:node frontend/vite.config* 2>/dev/null ./
-COPY --chown=node:node frontend/tsconfig* 2>/dev/null ./
+# Copy source code and files
+COPY frontend/index.html ./
+COPY frontend/src ./src
+COPY frontend/vite.config* ./
+COPY frontend/tsconfig* ./
 
 # Build the app
 RUN npm run build
