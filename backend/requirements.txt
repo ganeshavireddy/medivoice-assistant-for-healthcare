@@ -1,0 +1,44 @@
+"""
+MediVoice AI - Backend Dependencies
+
+Production dependencies for the FastAPI backend.
+"""
+
+# FastAPI and web
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+starlette==0.37.0
+
+# Database
+sqlalchemy==2.0.32
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Authentication and security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# LLM and AI
+openai==1.35.0
+google-generativeai==0.8.2
+
+# Voice AI
+faster-whisper==1.1.0
+edge-tts==5.4.0
+
+# RAG and Vector Database
+chromadb==0.4.18
+sentence-transformers==2.2.2
+pdfplumber==0.3.3
+
+# MCP
+fastmcp==0.1.5
+
+# Testing
+pytest==8.2.0
+httpx==0.27.0
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.7.4
+pydantic-core==2.25.1
