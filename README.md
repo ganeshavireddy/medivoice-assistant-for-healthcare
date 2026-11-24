@@ -1,5 +1,13 @@
 # MediVoice AI – Multilingual Voice-Based Healthcare Assistant
 
+[![Live Application](https://img.shields.io/badge/Live%20Demo-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://medivoice-frontend-44fk.onrender.com)
+[![Backend API](https://img.shields.io/badge/API-Operational-blue?style=for-the-badge&logo=fastapi&logoColor=white)](https://medivoice-assistant-for-healthcare-1.onrender.com)
+[![Swagger Docs](https://img.shields.io/badge/API%20Docs-Swagger-85EA2D?style=for-the-badge&logo=swagger&logoColor=black)](https://medivoice-assistant-for-healthcare-1.onrender.com/docs)
+
+> 🌐 **Live Web Application**: [https://medivoice-frontend-44fk.onrender.com](https://medivoice-frontend-44fk.onrender.com)  
+> ⚡ **Backend API**: [https://medivoice-assistant-for-healthcare-1.onrender.com](https://medivoice-assistant-for-healthcare-1.onrender.com)  
+> 📖 **Interactive API Documentation (Swagger)**: [https://medivoice-assistant-for-healthcare-1.onrender.com/docs](https://medivoice-assistant-for-healthcare-1.onrender.com/docs)
+
 ![MediVoice AI Logo](https://images.unsplash.com/photo-1544005127-8cf0d6eb4c4e?w=800&h=400&fit=crop)
 
 ## Project Overview
@@ -296,8 +304,8 @@ graph TD
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/medivoice-ai.git
-   cd medivoice-ai
+   git clone https://github.com/ganeshavireddy/medivoice-assistant-for-healthcare.git
+   cd medivoice-assistant-for-healthcare
    ```
 
 2. **Create a virtual environment**
@@ -355,6 +363,17 @@ graph TD
    ```
 
    The frontend will be available at `http://localhost:5173` (default Vite port).
+
+### Cloud Deployment (Render)
+
+The application is deployed live on Render:
+
+| Service | Environment | URL |
+| :--- | :--- | :--- |
+| **Frontend Web App** | Render Static Site | [https://medivoice-frontend-44fk.onrender.com](https://medivoice-frontend-44fk.onrender.com) |
+| **Backend Web Service** | Render Docker Web Service | [https://medivoice-assistant-for-healthcare-1.onrender.com](https://medivoice-assistant-for-healthcare-1.onrender.com) |
+| **Swagger API Docs** | OpenAPI / FastAPI Docs | [https://medivoice-assistant-for-healthcare-1.onrender.com/docs](https://medivoice-assistant-for-healthcare-1.onrender.com/docs) |
+| **Health Check** | Status Monitoring | [https://medivoice-assistant-for-healthcare-1.onrender.com/health](https://medivoice-assistant-for-healthcare-1.onrender.com/health) |
 
 ### Docker Deployment
 
