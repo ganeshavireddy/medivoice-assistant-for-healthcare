@@ -27,12 +27,12 @@ export const RAGMetrics: React.FC<RAGProps> = ({ data, loading }) => {
 
   const kMetricsData = data && !isNoData
     ? [
-        { name: 'Precision@3', score: Math.round(data.precision_at_3 * 100) },
-        { name: 'Precision@5', score: Math.round(data.precision_at_5 * 100) },
-        { name: 'Precision@10', score: Math.round(data.precision_at_10 * 100) },
-        { name: 'Recall@5', score: Math.round(data.recall_at_5 * 100) },
-        { name: 'Hit Rate@5', score: Math.round(data.hit_rate_at_5 * 100) },
-        { name: 'MRR', score: Math.round(data.mrr * 100) },
+        { name: 'Precision@3', score: Math.round((data.precision_at_3 ?? 0) * 100) },
+        { name: 'Precision@5', score: Math.round((data.precision_at_5 ?? 0) * 100) },
+        { name: 'Precision@10', score: Math.round((data.precision_at_10 ?? 0) * 100) },
+        { name: 'Recall@5', score: Math.round((data.recall_at_5 ?? 0) * 100) },
+        { name: 'Hit Rate@5', score: Math.round((data.hit_rate_at_5 ?? 0) * 100) },
+        { name: 'MRR', score: Math.round((data.mrr ?? 0) * 100) },
       ]
     : [];
 

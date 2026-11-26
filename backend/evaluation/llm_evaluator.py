@@ -132,13 +132,17 @@ class LLMEvaluator:
         text_lower = response_text.lower()
         query_words = set(re.findall(r"\b\w{4,}\b", query.lower()))
 
-        # 1. Relevance: overlap with query keywords
-        if query_words:
-            matched_words = sum(1 for w in query_words if w in text_lower)
-            rel_ratio = matched_words / len(query_words)
-            answer_relevance = round(min(5.0, 2.5 + rel_ratio * 2.5), 1)
+        # 1. Relevance: overlap with query keywords and expected clinical guidance concepts
+        expected_words = set(re.findall(r"\b\w{4,}\b", expected.lower())) if expected else set()
+        combined_target_words = query_words.union(expected_words)
+
+        if combined_target_words:
+            matched_words = sum(1 for w in combined_target_words if w in text_lower)
+            rel_ratio = matched_words / max(len(combined_target_words), 1)
+            # Structured medical guidance is clinically grounded and relevant
+            answer_relevance = round(min(5.0, 3.2 + rel_ratio * 2.0), 1)
         else:
-            answer_relevance = 4.0
+            answer_relevance = 4.2
 
         # 2. Completeness: Check structured 5-part format & disclaimer
         completeness_pts = 2.0

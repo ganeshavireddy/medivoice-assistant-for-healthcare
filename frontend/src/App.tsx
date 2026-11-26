@@ -862,31 +862,68 @@ export default function App() {
   // -------------------------------------------------------------------------
   // VOICE INPUT RECORDING (SPEECH-TO-TEXT)
   // -------------------------------------------------------------------------
+  // Helper to encode raw PCM Float32 audio samples into a genuine 16-bit Mono WAV file
+  const createWAVBlob = (audioBuffers: Float32Array[], sampleRate: number): Blob => {
+    let totalLength = 0;
+    for (const buf of audioBuffers) {
+      totalLength += buf.length;
+    }
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    for (const buf of audioBuffers) {
+      merged.set(buf, offset);
+      offset += buf.length;
+    }
+
+    const buffer = new ArrayBuffer(44 + merged.length * 2);
+    const view = new DataView(buffer);
+
+    const writeString = (view: DataView, offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + merged.length * 2, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, 1, true); // Mono channel
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // Byte rate
+    view.setUint16(32, 2, true); // Block align
+    view.setUint16(34, 16, true); // 16 bits per sample
+    writeString(view, 36, 'data');
+    view.setUint32(40, merged.length * 2, true);
+
+    let sampleOffset = 44;
+    for (let i = 0; i < merged.length; i++, sampleOffset += 2) {
+      const s = Math.max(-1, Math.min(1, merged[i]));
+      view.setInt16(sampleOffset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+
+    return new Blob([buffer], { type: 'audio/wav' });
+  };
+
+  const silenceTimerRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioBuffersRef = useRef<Float32Array[]>([]);
+
   const startRecording = async () => {
     setMicStatusMsg(null);
     setLiveTranscript('');
     transcriptRef.current = '';
     stopAudio();
 
-    // 1. Explicitly prompt / check for microphone permission first
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Immediately release test stream so recognition can take over audio device cleanly
-        stream.getTracks().forEach((track) => track.stop());
-      } catch (permErr: any) {
-        console.warn('Microphone permission check failed:', permErr);
-        setMicStatusMsg(
-          language === 'te'
-            ? 'దయచేసి మీ బ్రౌజర్‌లో మైక్రోఫోన్ అనుమతిని (Allow Microphone) ఆన్ చేయండి.'
-            : 'Microphone permission blocked. Please allow microphone permissions in your browser address bar.'
-        );
-        setIsRecording(false);
-        return;
-      }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
 
-    // 2. Check if native Web Speech API is supported
+    // 1. Try Native Web Speech API (Chrome, Edge, Safari, Android)
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (SpeechRecognition) {
@@ -894,7 +931,7 @@ export default function App() {
         const recognition = new SpeechRecognition();
         recognitionRef.current = recognition;
         recognition.lang = language === 'te' ? 'te-IN' : 'en-US';
-        recognition.continuous = false; // Conversational single-turn: auto-detects end of speech
+        recognition.continuous = true; // Continuous listening so pauses don't cut user off
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
@@ -902,8 +939,8 @@ export default function App() {
           setIsRecording(true);
           setMicStatusMsg(
             language === 'te'
-              ? '🎙️ వింటున్నాను... మైక్రోఫోన్‌లో మాట్లాడండి'
-              : '🎙️ Listening... speak clearly into your microphone'
+              ? '🎙️ వింటున్నాను... మైక్రోఫోన్‌లో మాట్లాడండి (పూర్తయిన తర్వాత ఆపండి)'
+              : '🎙️ Listening... speak clearly into your mic (click Stop when finished)'
           );
         };
 
@@ -922,38 +959,53 @@ export default function App() {
             transcriptRef.current = fullText;
             setLiveTranscript(fullText);
             setInputQuery(fullText);
+
+            // Reset silence auto-submit timer (auto-submit after 3 seconds of silence)
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(() => {
+              const textToSend = transcriptRef.current.trim();
+              if (textToSend.length > 2 && isRecording) {
+                stopRecording();
+              }
+            }, 3000);
           }
         };
 
         recognition.onerror = (e: any) => {
           console.warn('SpeechRecognition error:', e.error);
           if (e.error === 'not-allowed') {
-            setMicStatusMsg('Microphone access blocked. Please allow microphone permissions in your browser address bar.');
+            setMicStatusMsg(
+              language === 'te'
+                ? 'దయచేసి మీ బ్రౌజర్‌లో మైక్రోఫోన్ అనుమతిని (Allow Microphone) ఆన్ చేయండి.'
+                : 'Microphone access blocked. Please allow mic permissions in your browser address bar.'
+            );
             setIsRecording(false);
           } else if (e.error === 'no-speech') {
-            setMicStatusMsg('No speech detected. Please speak clearly or click the quick actions below.');
-            setIsRecording(false);
+            // Keep listening, don't abort immediately
+            setMicStatusMsg('Listening... speak when ready.');
           } else {
             startMediaRecorderFallback();
           }
         };
 
         recognition.onend = () => {
-          setIsRecording(false);
-          // If speech was recorded before the browser ended, send automatically!
-          const finalSpeech = transcriptRef.current.trim();
-          if (finalSpeech.length > 1) {
-            handleSendMessage(finalSpeech);
-            transcriptRef.current = '';
-            setLiveTranscript('');
-            setMicStatusMsg(null);
+          if (isRecording) {
+            // Only finalize if we haven't manually stopped
+            const finalSpeech = transcriptRef.current.trim();
+            if (finalSpeech.length > 1) {
+              handleSendMessage(finalSpeech);
+              transcriptRef.current = '';
+              setLiveTranscript('');
+              setMicStatusMsg(null);
+            }
+            setIsRecording(false);
           }
         };
 
         recognition.start();
         return;
       } catch (e) {
-        console.warn('SpeechRecognition start error, falling back to MediaRecorder:', e);
+        console.warn('SpeechRecognition start error, falling back to WebAudio WAV recorder:', e);
       }
     }
 
@@ -963,74 +1015,101 @@ export default function App() {
   const startMediaRecorderFallback = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
+      audioStreamRef.current = stream;
+      audioBuffersRef.current = [];
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioCtx({ sampleRate: 16000 });
+      audioContextRef.current = audioCtx;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+      processor.onaudioprocess = (e) => {
+        const channelData = e.inputBuffer.getChannelData(0);
+        audioBuffersRef.current.push(new Float32Array(channelData));
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'recording.wav');
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
 
-        setIsProcessing(true);
-        setMicStatusMsg('Processing speech audio...');
-
-        try {
-          const res = await fetch(`${API_BASE}/voice/transcribe`, {
-            method: 'POST',
-            body: formData,
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.transcription && data.transcription.trim()) {
-              setInputQuery(data.transcription);
-              handleSendMessage(data.transcription);
-              setMicStatusMsg(null);
-            } else {
-              setMicStatusMsg('No speech recognized in audio. Please speak clearly into your mic.');
-            }
-          }
-        } catch (e) {
-          console.error('Transcription error:', e);
-          setMicStatusMsg('Failed to transcribe audio.');
-        } finally {
-          setIsProcessing(false);
-        }
-      };
-
-      mediaRecorder.start();
       setIsRecording(true);
-      setMicStatusMsg('Recording audio... click Mic again to finish');
+      setMicStatusMsg('Recording audio... click Mic again to send');
     } catch (err) {
-      console.warn('Microphone permission blocked or unavailable.');
-      setMicStatusMsg('Microphone permission is blocked. Please enable it in browser settings or use the quick action buttons.');
+      console.warn('Microphone permission blocked or unavailable:', err);
+      setMicStatusMsg(
+        language === 'te'
+          ? 'మైక్రోఫోన్ అనుమతి అవసరం. దయచేసి అనుమతించండి లేదా క్రింది బటన్లను వాడండి.'
+          : 'Microphone permission blocked. Please allow mic access or use quick action buttons below.'
+      );
       setIsRecording(false);
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch (e) {}
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (e) {}
+
+    // Stop Web Audio fallback if active
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((track) => track.stop());
+      audioStreamRef.current = null;
     }
+
+    if (audioContextRef.current && audioBuffersRef.current.length > 0) {
+      try {
+        const wavBlob = createWAVBlob(audioBuffersRef.current, 16000);
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+        audioBuffersRef.current = [];
+
+        // Send genuine PCM WAV to backend /voice/transcribe
+        const formData = new FormData();
+        formData.append('file', wavBlob, 'recording.wav');
+
+        setIsProcessing(true);
+        setMicStatusMsg('Transcribing speech...');
+
+        const res = await fetch(`${API_BASE}/voice/transcribe`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.transcription && data.transcription.trim()) {
+            setInputQuery(data.transcription);
+            handleSendMessage(data.transcription);
+            setMicStatusMsg(null);
+            setIsRecording(false);
+            setIsProcessing(false);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Fallback transcription error:', e);
+      } finally {
+        setIsProcessing(false);
+      }
+    }
+
     setIsRecording(false);
 
-    // If we have live transcript or input query, send it
+    // If we have live transcript or input query from SpeechRecognition, send it
     const textToSend = (transcriptRef.current || liveTranscript || inputQuery).trim();
     if (textToSend.length > 0) {
       handleSendMessage(textToSend);
       transcriptRef.current = '';
       setLiveTranscript('');
+      setMicStatusMsg(null);
     }
   };
 

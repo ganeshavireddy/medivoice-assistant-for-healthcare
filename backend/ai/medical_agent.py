@@ -239,6 +239,105 @@ class MasterMedicalAgent:
                 )
             return {"indicator": "chest_pain_or_respiratory_failure", "text": msg}
 
+        # Anaphylaxis / Severe Allergic Reaction
+        if any(w in lower for w in [
+            "throat feels swollen", "throat closing", "swollen shut", "wheezing after eating",
+            "hives everywhere", "anaphylaxis", "severe allergic", "peanut allergy", "peanuts",
+            "శ్వాస నాళం వాపు", "తీవ్ర ఎలర్జీ", "ఎలర్జీ"
+        ]):
+            if language == "te":
+                msg = (
+                    "🚨 అత్యవసర హెచ్చరిక – అనాఫిలాక్సిస్ తీవ్రమైన ఎలర్జీ (SEVERE ANAPHYLAXIS):\n\n"
+                    "గొంతు వాపు, శ్వాస ఆడకపోవడం, శరీరం అంతటా దద్దుర్లు ప్రాణాంతక ఎలర్జీని సూచిస్తాయి.\n\n"
+                    "1. వెంటనే 112 లేదా 108 కి కాల్ చేయండి లేదా సమీప ఆసుపత్రి ఎమర్జెన్సీ వార్డుకు వెళ్ళండి.\n"
+                    "2. ఎపినెఫ్రిన్ (EpiPen) ఆటో-ఇంజెక్టర్ అందుబాటులో ఉంటే వెంటనే తొడ భాగంలో ఇవ్వండి.\n"
+                    "3. రోగిని పడుకోబెట్టి కాళ్లను కొద్దిగా పైకి ఎత్తండి. ఆహారం లేదా నీరు ఇవ్వవద్దు."
+                )
+            else:
+                msg = (
+                    "🚨 CRITICAL EMERGENCY ALERT – SEVERE ANAPHYLAXIS DETECTED:\n\n"
+                    "Airway compromise, throat swelling, widespread urticaria, and wheezing indicate life-threatening anaphylaxis.\n\n"
+                    "1. Call emergency services immediately: Dial 112 or 108 in India (or 911 / local emergency services).\n"
+                    "2. Administer an Epinephrine Auto-Injector (EpiPen) immediately into the outer thigh if available.\n"
+                    "3. Lie the patient flat with legs elevated. Do not allow them to stand or walk.\n"
+                    "4. Immediate emergency department transfer is required."
+                )
+            return {"indicator": "anaphylaxis_emergency", "text": msg}
+
+        # Severe Hemorrhage / Arterial Bleeding
+        if any(w in lower for w in [
+            "spurting", "arterial blood", "won't stop with pressure", "wont stop with pressure",
+            "heavy bleeding", "gushing blood", "severe bleeding", "deep glass cut", "రక్తం కారడం",
+            "తీవ్ర రక్తస్రావం"
+        ]):
+            if language == "te":
+                msg = (
+                    "🚨 అత్యవసర హెచ్చరిక – తీవ్ర రక్తస్రావం (SEVERE ARTERIAL BLEEDING):\n\n"
+                    "ఆగని తీవ్ర రక్తస్రావం లేదా ధమని రక్తస్రావం అత్యవసర శస్త్రచికిత్సను కోరుతుంది.\n\n"
+                    "1. శుభ్రమైన గుడ్డ లేదా గాజ్ ప్యాడ్‌తో గాయంపై గట్టిగా నేరుగా ఒత్తిడి (firm direct pressure) పెట్టండి.\n"
+                    "2. గాయపడిన భాగాన్ని గుండె స్థాయి కంటే పైకి ఎత్తండి (elevate limb).\n"
+                    "3. వెంటనే 112 లేదా 108 కి కాల్ చేసి అత్యవసర సహాయం పొందండి."
+                )
+            else:
+                msg = (
+                    "🚨 CRITICAL EMERGENCY ALERT – SEVERE ARTERIAL HEMORRHAGE:\n\n"
+                    "Rapid arterial or uncontrolled bleeding requires immediate emergency surgical intervention.\n\n"
+                    "1. Apply firm, continuous, direct pressure over the bleeding site with a clean cloth or sterile gauze.\n"
+                    "2. Elevate the injured extremity above heart level while maintaining pressure.\n"
+                    "3. Call emergency medical services immediately: Dial 112 or 108 in India (or 911 / emergency services).\n"
+                    "4. Do NOT remove the pressure dressing until paramedics arrive."
+                )
+            return {"indicator": "severe_hemorrhage", "text": msg}
+
+        # Sudden Collapse / Unresponsiveness / Seizures
+        if any(w in lower for w in [
+            "collapsed", "not responding", "unresponsive", "shaking shoulders",
+            "unconscious", "passed out", "seizure", "loss of consciousness",
+            "స్పృహ తప్పడం", "స్పృహ కోల్పోవడం", "కింద పడిపోయారు"
+        ]):
+            if language == "te":
+                msg = (
+                    "🚨 అత్యవసర హెచ్చరిక – స్పృహ కోల్పోవడం (UNRESPONSIVE PATIENT ALERT):\n\n"
+                    "రోగి అకస్మాత్తుగా స్పృహ కోల్పోవడం లేదా ప్రతిస్పందించకపోవడం అత్యవసర పరిస్థితి.\n\n"
+                    "1. వెంటనే 112 లేదా 108 కి కాల్ చేయండి.\n"
+                    "2. శ్వాస తీసుకుంటున్నారో లేదో చూడండి. శ్వాస లేకపోతే CPR ప్రారంభించండి.\n"
+                    "3. రోగిని సురక్షితమైన ప్రక్కవైపుకు తిప్పండి (recovery position) మరియు వాయునాళాన్ని క్లియర్‌గా ఉంచండి."
+                )
+            else:
+                msg = (
+                    "🚨 CRITICAL EMERGENCY ALERT – UNRESPONSIVE PATIENT:\n\n"
+                    "Sudden collapse or unresponsiveness requires immediate emergency medical response and life support assessment.\n\n"
+                    "1. Call 112 or 108 immediately in India (or 911 / local emergency services).\n"
+                    "2. Check for breathing and responsiveness. If not breathing normally, begin cardiopulmonary resuscitation (CPR).\n"
+                    "3. Place in safe recovery position if breathing. Keep airway clear and do not leave patient alone."
+                )
+            return {"indicator": "unresponsive_collapse", "text": msg}
+
+        # Mental Health Crisis / Acute Suicide Ideation
+        if any(w in lower for w in [
+            "ending my life", "end my life", "suicide", "kill myself", "want to die",
+            "commit suicide", "hopeless", "self harm", "self-harm", "ఆత్మహత్య"
+        ]):
+            if "tonight" in lower or "thinking about ending" in lower or "want to die" in lower or "kill myself" in lower or "suicide" in lower:
+                if language == "te":
+                    msg = (
+                        "🚨 అత్యవసర మానసిక ఆరోగ్య సహాయం (CRISIS HOTLINE ALERT):\n\n"
+                        "మీ ప్రాణం ఎంతో విలువైనది, మీరు ఒంటరిగా లేరు. మీకు సహాయం చేయడానికి నిపుణులు 24/7 సిద్ధంగా ఉన్నారు:\n\n"
+                        "• జాతీయ మానసిక ఆరోగ్య హెల్ప్‌లైన్ (Tele-MANAS): 14416 లేదా 1800 891 4416 (ఉచితం, 24 గంటలు)\n"
+                        "• కిరణ్ (KIRAN Mental Health Helpline): 1800-599-0019\n"
+                        "• అత్యవసర సేవల కోసం 112 కి కాల్ చేయండి లేదా మీ కుటుంబ సభ్యులతో వెంటనే మాట్లాడండి."
+                    )
+                else:
+                    msg = (
+                        "🚨 IMMEDIATE CRISIS SUPPORT AVAILABLE – YOU ARE NOT ALONE:\n\n"
+                        "Your life has immense value and free, confidential support is available 24 hours a day, 7 days a week:\n\n"
+                        "• Tele-MANAS (India National Mental Health Helpline): Call 14416 or 1800-891-4416 (Toll-Free, 24/7)\n"
+                        "• KIRAN Mental Health Helpline: 1800-599-0019\n"
+                        "• Global / US Suicide & Crisis Lifeline: Call or text 988\n"
+                        "• Emergency Services: Dial 112 or 108 right away, or reach out to a trusted family member or emergency department immediately."
+                    )
+                return {"indicator": "mental_health_crisis", "text": msg}
+
         # Acute Complete Urinary Retention (Section 11)
         if any(w in lower for w in ["cannot urinate", "can't pee", "unable to pass urine", "inability to urinate", "మూత్రం అసలు రావడం లేదు", "पेशाब बिल्कुल नहीं आ रहा"]):
             if "discomfort" in lower or "pain" in lower or "hours" in lower or ctx.symptoms:

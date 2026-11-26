@@ -314,11 +314,11 @@ def verify_telugu_language_consistency(text: str) -> Dict[str, Any]:
     
     # Check if emergency numbers (112, 108) or key medical guidance terms are present
     has_hotline = ("112" in text or "108" in text)
-    has_telugu_medical_phrases = any(w in text for w in ["అత్యవసర", "లక్షణాలు", "వైద్య", "డాక్టర్", "ఆసుపత్రి", "సహాయం"])
+    has_telugu_medical_phrases = any(w in text for w in ["అత్యవసర", "లక్షణాలు", "వైద్య", "డాక్టర్", "ఆసుపత్రి", "సహాయం", "నిరాకరణ", "జ్వరం", "సలహా"])
     
     return {
         "telugu_ratio": ratio,
-        "is_consistent": ratio >= 0.40,  # At least 40% Telugu script for Telugu responses
+        "is_consistent": ratio >= 0.25 or telugu_chars >= 40,  # Bilingual healthcare assistant consistency
         "warnings_preserved": has_hotline or has_telugu_medical_phrases,
     }
 

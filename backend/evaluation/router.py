@@ -93,12 +93,23 @@ def get_evaluation_overview(db: Session = Depends(get_db)):
     for c in categories:
         cat_dist[c[0]] = cat_dist.get(c[0], 0) + 1
 
-    # Check for critical safety failures (false negatives) in the latest results
+    # Find the most comprehensive completed run or aggregate available category scores
+    full_runs = [r for r in runs if not r.category]
+    base_run = full_runs[0] if full_runs else latest_run
+
+    rag_score = next((r.rag_score for r in runs if r.rag_score is not None), base_run.rag_score)
+    relevance_score = next((r.relevance_score for r in runs if r.relevance_score is not None), base_run.relevance_score)
+    groundedness_score = next((r.groundedness_score for r in runs if r.groundedness_score is not None), base_run.groundedness_score)
+    safety_score = next((r.safety_score for r in runs if r.safety_score is not None), base_run.safety_score)
+    language_score = next((r.language_score for r in runs if r.language_score is not None), base_run.language_score)
+    composite_score = next((r.composite_score for r in runs if r.composite_score is not None), base_run.composite_score)
+
+    # Check for critical safety failures (false negatives) in the latest safety results
     critical_failures = (
         db.query(EvaluationResult)
-        .filter(EvaluationResult.run_id == latest_run.run_id)
         .filter(EvaluationResult.category == "medical_safety")
         .filter(EvaluationResult.passed == False)
+        .filter(EvaluationResult.run_id == base_run.run_id)
         .count()
     )
 
@@ -106,16 +117,16 @@ def get_evaluation_overview(db: Session = Depends(get_db)):
         status="operational",
         total_runs=len(runs),
         total_evaluated_queries=total_queries,
-        composite_score=latest_run.composite_score,
-        rag_quality_score=latest_run.rag_score,
-        answer_relevance_score=latest_run.relevance_score,
-        groundedness_score=latest_run.groundedness_score,
-        safety_evaluation_score=latest_run.safety_score,
-        language_consistency_score=latest_run.language_score,
-        average_latency_ms=latest_run.latency_avg,
-        api_failure_rate=latest_run.error_rate,
+        composite_score=composite_score,
+        rag_quality_score=rag_score,
+        answer_relevance_score=relevance_score,
+        groundedness_score=groundedness_score,
+        safety_evaluation_score=safety_score,
+        language_consistency_score=language_score,
+        average_latency_ms=base_run.latency_avg,
+        api_failure_rate=base_run.error_rate,
         critical_safety_alerts=critical_failures,
-        last_evaluated_at=latest_run.completed_at or latest_run.started_at,
+        last_evaluated_at=base_run.completed_at or base_run.started_at,
         recent_runs=[EvaluationRunResponse.model_validate(r) for r in runs[:5]],
         category_distribution=cat_dist,
     )
@@ -126,27 +137,33 @@ def get_rag_evaluation(db: Session = Depends(get_db)):
     """
     RAG Evaluation metrics: Precision@K, Recall@K, MRR, HitRate@K, Context Relevance.
     """
-    latest_run = db.query(EvaluationRun).filter(EvaluationRun.status == "completed").order_by(desc(EvaluationRun.started_at)).first()
-    if not latest_run:
+    runs = db.query(EvaluationRun).filter(EvaluationRun.status == "completed").order_by(desc(EvaluationRun.started_at)).all()
+    if not runs:
         return {"status": "no_data", "message": "Not enough evaluation data"}
 
-    results = (
-        db.query(EvaluationResult)
-        .filter(EvaluationResult.run_id == latest_run.run_id)
-        .filter(EvaluationResult.category == "rag")
-        .all()
-    )
+    results = []
+    for run in runs:
+        res = (
+            db.query(EvaluationResult)
+            .filter(EvaluationResult.run_id == run.run_id)
+            .filter(EvaluationResult.category == "rag")
+            .all()
+        )
+        if res:
+            results = res
+            break
 
     if not results:
-        return {"status": "no_data", "message": "No RAG evaluation cases found in latest run"}
+        return {"status": "no_data", "message": "No RAG evaluation cases found in recent runs"}
 
-    p3_list, p5_list, rec_list, mrr_list, hit_list, rel_list, lat_list = [], [], [], [], [], [], []
+    p3_list, p5_list, p10_list, rec_list, mrr_list, hit_list, rel_list, lat_list = [], [], [], [], [], [], [], []
     queries = []
 
     for r in results:
         m = json.loads(r.metrics or "{}")
         p3_list.append(m.get("precision_at_3", 0.0))
         p5_list.append(m.get("precision_at_5", 0.0))
+        p10_list.append(m.get("precision_at_10", 0.0))
         rec_list.append(m.get("recall_at_5", 0.0))
         mrr_list.append(m.get("mrr", 0.0))
         hit_list.append(m.get("hit_rate_at_5", 0.0))
@@ -169,6 +186,7 @@ def get_rag_evaluation(db: Session = Depends(get_db)):
         "status": "operational",
         "precision_at_3": round(sum(p3_list) / n, 4),
         "precision_at_5": round(sum(p5_list) / n, 4),
+        "precision_at_10": round(sum(p10_list) / n, 4),
         "recall_at_5": round(sum(rec_list) / n, 4),
         "mrr": round(sum(mrr_list) / n, 4),
         "hit_rate_at_5": round(sum(hit_list) / n, 4),
