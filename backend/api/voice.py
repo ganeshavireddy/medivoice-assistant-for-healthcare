@@ -101,7 +101,7 @@ async def generate_audio_bytes(text: str, language: str = "en") -> bytes:
 
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe_audio(file: UploadFile = File(...)):
-    """Transcribe audio using Faster-Whisper."""
+    """Transcribe audio using SpeechRecognition or Faster-Whisper."""
     content = await file.read()
     
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -111,26 +111,46 @@ async def transcribe_audio(file: UploadFile = File(...)):
     transcription = ""
     detected_lang = "en"
     
+    # 1. Try SpeechRecognition (Google API - fast, lightweight, accurate)
     try:
-        model = get_whisper_model()
-        if model:
-            segments, info = model.transcribe(tmp_path, beam_size=3)
-            texts = [segment.text for segment in segments]
-            if texts:
-                transcription = "".join(texts).strip()
-            detected_lang = getattr(info, "language", "en")
-    except Exception as e:
-        logger.error(f"Transcription error: {e}")
-    finally:
-        if os.path.exists(tmp_path):
+        import speech_recognition as sr
+        r = sr.Recognizer()
+        with sr.AudioFile(tmp_path) as source:
+            audio_data = r.record(source)
+            # Recognize speech
             try:
-                os.unlink(tmp_path)
+                transcription = r.recognize_google(audio_data, language="en-US")
+                detected_lang = "en"
             except Exception:
-                pass
+                # Try Telugu recognition
+                try:
+                    transcription = r.recognize_google(audio_data, language="te-IN")
+                    detected_lang = "te"
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"SpeechRecognition notice: {e}")
     
+    # 2. Try Faster-Whisper if available
     if not transcription:
-        transcription = "I would like to consult a doctor about my recent symptoms."
-        
+        try:
+            model = get_whisper_model()
+            if model:
+                segments, info = model.transcribe(tmp_path, beam_size=3)
+                texts = [segment.text for segment in segments]
+                if texts:
+                    transcription = "".join(texts).strip()
+                detected_lang = getattr(info, "language", "en")
+        except Exception as e:
+            logger.debug(f"Whisper transcription notice: {e}")
+    
+    # Clean up temporary audio file
+    if os.path.exists(tmp_path):
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+    
     return {"transcription": transcription, "language": detected_lang}
 
 

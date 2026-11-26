@@ -868,7 +868,25 @@ export default function App() {
     transcriptRef.current = '';
     stopAudio();
 
-    // Check if SpeechRecognition is supported
+    // 1. Explicitly prompt / check for microphone permission first
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Immediately release test stream so recognition can take over audio device cleanly
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (permErr: any) {
+        console.warn('Microphone permission check failed:', permErr);
+        setMicStatusMsg(
+          language === 'te'
+            ? 'దయచేసి మీ బ్రౌజర్‌లో మైక్రోఫోన్ అనుమతిని (Allow Microphone) ఆన్ చేయండి.'
+            : 'Microphone permission blocked. Please allow microphone permissions in your browser address bar.'
+        );
+        setIsRecording(false);
+        return;
+      }
+    }
+
+    // 2. Check if native Web Speech API is supported
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (SpeechRecognition) {
@@ -876,24 +894,34 @@ export default function App() {
         const recognition = new SpeechRecognition();
         recognitionRef.current = recognition;
         recognition.lang = language === 'te' ? 'te-IN' : 'en-US';
-        recognition.continuous = true;
+        recognition.continuous = false; // Conversational single-turn: auto-detects end of speech
         recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
 
         recognition.onstart = () => {
           setIsRecording(true);
-          setMicStatusMsg(language === 'te' ? '🎙️ వినబడుతోంది... మైక్రోఫోన్‌లో స్పష్టంగా మాట్లాడండి' : '🎙️ Listening... speak clearly into your microphone');
+          setMicStatusMsg(
+            language === 'te'
+              ? '🎙️ వింటున్నాను... మైక్రోఫోన్‌లో మాట్లాడండి'
+              : '🎙️ Listening... speak clearly into your microphone'
+          );
         };
 
         recognition.onresult = (event: any) => {
-          let currentSessionText = '';
+          let final = '';
+          let interim = '';
           for (let i = 0; i < event.results.length; i++) {
-            currentSessionText += event.results[i][0].transcript + ' ';
+            if (event.results[i].isFinal) {
+              final += event.results[i][0].transcript + ' ';
+            } else {
+              interim += event.results[i][0].transcript;
+            }
           }
-          const trimmed = currentSessionText.trim();
-          if (trimmed) {
-            transcriptRef.current = trimmed;
-            setLiveTranscript(trimmed);
-            setInputQuery(trimmed);
+          const fullText = (final || interim || '').trim();
+          if (fullText) {
+            transcriptRef.current = fullText;
+            setLiveTranscript(fullText);
+            setInputQuery(fullText);
           }
         };
 
@@ -904,8 +932,8 @@ export default function App() {
             setIsRecording(false);
           } else if (e.error === 'no-speech') {
             setMicStatusMsg('No speech detected. Please speak clearly or click the quick actions below.');
+            setIsRecording(false);
           } else {
-            // Try MediaRecorder fallback
             startMediaRecorderFallback();
           }
         };
@@ -918,6 +946,7 @@ export default function App() {
             handleSendMessage(finalSpeech);
             transcriptRef.current = '';
             setLiveTranscript('');
+            setMicStatusMsg(null);
           }
         };
 
@@ -960,6 +989,9 @@ export default function App() {
             if (data.transcription && data.transcription.trim()) {
               setInputQuery(data.transcription);
               handleSendMessage(data.transcription);
+              setMicStatusMsg(null);
+            } else {
+              setMicStatusMsg('No speech recognized in audio. Please speak clearly into your mic.');
             }
           }
         } catch (e) {
@@ -975,7 +1007,7 @@ export default function App() {
       setMicStatusMsg('Recording audio... click Mic again to finish');
     } catch (err) {
       console.warn('Microphone permission blocked or unavailable.');
-      setMicStatusMsg('Microphone permission is blocked. Please enable it in browser settings or use the sample queries.');
+      setMicStatusMsg('Microphone permission is blocked. Please enable it in browser settings or use the quick action buttons.');
       setIsRecording(false);
     }
   };
@@ -995,7 +1027,7 @@ export default function App() {
 
     // If we have live transcript or input query, send it
     const textToSend = (transcriptRef.current || liveTranscript || inputQuery).trim();
-    if (textToSend.length > 1) {
+    if (textToSend.length > 0) {
       handleSendMessage(textToSend);
       transcriptRef.current = '';
       setLiveTranscript('');
