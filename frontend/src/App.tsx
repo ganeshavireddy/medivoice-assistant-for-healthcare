@@ -26,7 +26,9 @@ import {
   AlertCircle,
   Play,
   Square,
+  BarChart2,
 } from 'lucide-react';
+import { EvaluationDashboard } from './pages/EvaluationDashboard';
 
 interface Doctor {
   id: number;
@@ -534,7 +536,7 @@ function StructuredMedicalMessage({ text, isEmergencyMsg }: { text: string; isEm
 // MAIN APPLICATION COMPONENT
 // ---------------------------------------------------------------------------
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'voice' | 'doctors' | 'reports' | 'appointments'>('voice');
+  const [activeTab, setActiveTab] = useState<'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation'>('voice');
   const [language, setLanguage] = useState<'en' | 'te'>('en');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
@@ -1068,6 +1070,25 @@ export default function App() {
             }}
           >
             <Calendar size={16} /> Appointments ({appointments.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('evaluation')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              fontSize: '14px',
+              fontWeight: 500,
+              backgroundColor: activeTab === 'evaluation' ? '#ffffff' : 'transparent',
+              color: activeTab === 'evaluation' ? '#0284c7' : '#64748b',
+              boxShadow: activeTab === 'evaluation' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <Activity size={16} /> AI Evaluation
           </button>
         </nav>
 
@@ -1906,6 +1927,11 @@ export default function App() {
               )}
             </div>
           </div>
+        )}
+
+        {/* TAB 5: AI EVALUATION DASHBOARD */}
+        {activeTab === 'evaluation' && (
+          <EvaluationDashboard apiHost={API_HOST} />
         )}
       </main>
     </div>

@@ -21,6 +21,7 @@ from api.appointments import router as appointments_router
 from api.voice import router as voice_router
 from api.reports import router as reports_router
 from api.rag import router as rag_router
+from evaluation.router import router as evaluation_router
 from mcp.server import mcp_app
 
 logging.basicConfig(
@@ -97,6 +98,8 @@ def create_app() -> FastAPI:
     app.include_router(voice_router)
     app.include_router(reports_router)
     app.include_router(rag_router)
+    app.include_router(evaluation_router, prefix=API_V1_PREFIX)
+    app.include_router(evaluation_router, prefix="/api")
 
     # Mount MCP sub-app
     app.mount("/api/mcp", mcp_app)
