@@ -2,10 +2,17 @@
 Automated Unit and Integration Tests for MediVoice AI Evaluation Module.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+try:
+    from app.main import app
+except ImportError:
+    from main import app
 from evaluation.metrics import (
     calculate_precision_at_k,
     calculate_recall_at_k,

@@ -21,11 +21,13 @@ Implements the Master System Prompt for MediVoice AI:
 
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from ai.llm_service import llm_service
 from ai.patient_state import patient_state_manager, PatientContext
 from rag.retriever import Retriever
 from mcp.server import MCPServer
+from database import SessionLocal, Doctor, Appointment
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,22 @@ class MasterMedicalAgent:
 
         # Step 2: Intent Classification (up to 25 specific intents)
         intents = self._classify_intents(user_text, ctx)
+
+        # Check for conversational appointment booking request
+        if self._is_appointment_booking_request(user_text):
+            booking_res = self._handle_appointment_booking(user_text, user_id, language)
+            if booking_res:
+                self.state_manager.record_turn(user_id, user_text, booking_res["text"])
+                return {
+                    "response_text": booking_res["text"],
+                    "citations": [],
+                    "mcp_result": booking_res.get("mcp_result"),
+                    "language": language,
+                    "intents": ["appointment_request", "appointment_booking"],
+                    "patient_state": ctx.to_dict(),
+                    "safety_applied": True,
+                    "booked_appointment": booking_res.get("appointment"),
+                }
 
         # Step 7 & 8: RAG Retrieval for medical intents
         rag_context = ""
@@ -787,6 +805,199 @@ class MasterMedicalAgent:
         if "general" in lower or "physician" in lower:
             return "General Practice"
         return None
+
+    def _is_appointment_booking_request(self, text: str) -> bool:
+        """Detect whether user query is requesting an appointment to be booked/scheduled."""
+        lower = text.lower()
+        booking_words = [
+            "book", "schedule", "reserve", "set up", "make an appointment", "need an appointment",
+            "fix an appointment", "బుక్", "షెడ్యూల్", "తీసుకోవాలి", "కావాలి", "నిర్ధారించు"
+        ]
+        appointment_words = [
+            "appointment", "consultation", "doctor", "slot", "visit",
+            "అపాయింట్‌మెంట్", "డాక్టర్", "సందర్శన", "స్లాట్"
+        ]
+        has_booking = any(w in lower or w in text for w in booking_words)
+        has_appointment = any(w in lower or w in text for w in appointment_words)
+        return has_booking and has_appointment
+
+    def _handle_appointment_booking(
+        self,
+        user_text: str,
+        user_id: int,
+        language: str = "en",
+    ) -> Optional[Dict[str, Any]]:
+        """Parses doctor, date, time and creates an appointment record directly in the database."""
+        try:
+            db = SessionLocal()
+            doctors = db.query(Doctor).all()
+            if not doctors:
+                db.close()
+                return None
+
+            lower = user_text.lower()
+            # Telugu name and specialization transliteration mapping
+            te_map = {
+                "రాజేష్": "rajesh", "రావు": "rao",
+                "సారా": "sarah", "స్మిత్": "smith",
+                "ప్రియా": "priya", "పటేల్": "patel",
+                "డేవిడ్": "david", "బ్రౌన్": "brown",
+                "ఎమిలీ": "emily", "జాన్సన్": "johnson",
+                "కార్డియాలజీ": "cardiology", "గుండె": "cardiology",
+                "న్యూరాలజీ": "neurology", "మెదడు": "neurology",
+                "పిల్లల": "pediatrics", "ఎముకల": "orthopedics",
+            }
+            for te_term, en_term in te_map.items():
+                if te_term in user_text:
+                    lower += f" {en_term}"
+
+            selected_doctor = None
+
+            # 1. Match doctor by name
+            for doc in doctors:
+                name_parts = [p.lower() for p in doc.name.split() if len(p) > 2 and p.lower() != "dr."]
+                if any(part in lower for part in name_parts):
+                    selected_doctor = doc
+                    break
+
+            # 2. Match by specialization if name not matched
+            if not selected_doctor:
+                for doc in doctors:
+                    spec_low = doc.specialization.lower()
+                    if (
+                        spec_low in lower
+                        or (spec_low == "cardiology" and "cardio" in lower)
+                        or (spec_low == "neurology" and "neuro" in lower)
+                        or (spec_low == "pediatrics" and "pediat" in lower)
+                        or (spec_low == "orthopedics" and "ortho" in lower)
+                    ):
+                        selected_doctor = doc
+                        break
+
+            # 3. Default to first doctor if unspecified
+            if not selected_doctor:
+                selected_doctor = doctors[0]
+
+            doc_id = selected_doctor.id
+            doc_name = selected_doctor.name
+            doc_spec = selected_doctor.specialization
+            doc_dept = getattr(selected_doctor, "department", None) or doc_spec
+
+            # 4. Parse date and time
+            now = datetime.now()
+            target_date = now + timedelta(days=1)  # Default to tomorrow
+
+            if "today" in lower or "ఈ రోజు" in user_text or "ఈరోజు" in user_text:
+                target_date = now
+            elif "tomorrow" in lower or "రేపు" in user_text:
+                target_date = now + timedelta(days=1)
+            elif "day after tomorrow" in lower or "ఎల్లుండి" in user_text:
+                target_date = now + timedelta(days=2)
+            else:
+                days_map = {
+                    "monday": 0, "tuesday": 1, "wednesday": 2,
+                    "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6
+                }
+                for day_name, day_num in days_map.items():
+                    if day_name in lower:
+                        days_ahead = day_num - now.weekday()
+                        if days_ahead <= 0:
+                            days_ahead += 7
+                        target_date = now + timedelta(days=days_ahead)
+                        break
+
+            # Parse hour and minute
+            hour = 10
+            minute = 0
+            time_match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b", lower)
+            if time_match:
+                h = int(time_match.group(1))
+                m = int(time_match.group(2) or 0)
+                meridiem = time_match.group(3).lower().replace(".", "")
+                if meridiem == "pm" and h < 12:
+                    h += 12
+                elif meridiem == "am" and h == 12:
+                    h = 0
+                hour = h
+                minute = m
+            else:
+                h_match = re.search(r"\b(?:at|around|time|గంటలకు)\s*(\d{1,2})\b", user_text)
+                if h_match:
+                    h = int(h_match.group(1))
+                    if 1 <= h <= 6:
+                        hour = h + 12
+                    elif 7 <= h <= 18:
+                        hour = h
+
+            appt_datetime = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            # 5. Insert Appointment into Database
+            new_appt = Appointment(
+                patient_id=user_id or 1,
+                doctor_id=doc_id,
+                appointment_time=appt_datetime,
+                status="confirmed",
+                reason=f"Scheduled via AI Assistant: {user_text[:80]}",
+                created_at=datetime.utcnow(),
+            )
+            db.add(new_appt)
+            db.commit()
+            db.refresh(new_appt)
+            appt_id = new_appt.id
+            db.close()
+
+            # 6. Format confirmation response
+            formatted_date_en = appt_datetime.strftime("%A, %B %d, %Y at %I:%M %p")
+            formatted_date_te = appt_datetime.strftime("%d-%m-%Y, %I:%M %p")
+
+            if language == "te":
+                response_text = (
+                    f"### ✅ మీ అపాయింట్‌మెంట్ విజయవంతంగా బుక్ చేయబడింది!\n\n"
+                    f"• **వైద్యులు:** {doc_name} ({doc_spec})\n"
+                    f"• **విభాగం:** {doc_dept}\n"
+                    f"• **తేదీ & సమయం:** {formatted_date_te}\n"
+                    f"• **అపాయింట్‌మెంట్ ID:** #{appt_id}\n"
+                    f"• **స్థితి:** నిర్ధారించబడింది (Confirmed)\n\n"
+                    f"మీ అపాయింట్‌మెంట్ సిస్టమ్‌లో నమోదైంది. మీరు దీన్ని **Appointments** ట్యాబ్‌లో చూడవచ్చు. "
+                    f"దయచేసి సమయానికి 10 నిమిషాల ముందుగా హాస్పిటల్‌కు చేరుకోండి.\n\n"
+                    f"⚠️ నిరాకరణ: ఇది ఆటోమేటెడ్ అపాయింట్‌మెంట్ నిర్ధారణ. అత్యవసర పరిస్థితుల్లో వెంటనే 112 లేదా 108కి కాల్ చేయండి."
+                )
+            else:
+                response_text = (
+                    f"### ✅ Appointment Successfully Scheduled!\n\n"
+                    f"• **Doctor:** {doc_name} ({doc_spec})\n"
+                    f"• **Department:** {doc_dept}\n"
+                    f"• **Date & Time:** {formatted_date_en}\n"
+                    f"• **Appointment ID:** #{appt_id}\n"
+                    f"• **Status:** Confirmed\n\n"
+                    f"Your appointment has been registered in your official record. You can view and manage it anytime in the **Appointments** tab. "
+                    f"Please arrive 10 minutes prior to your consultation time.\n\n"
+                    f"⚠️ Disclaimer: This is an automated scheduling confirmation. For urgent medical emergencies, immediately contact 112/108/911."
+                )
+
+            appointment_data = {
+                "id": appt_id,
+                "doctor_id": doc_id,
+                "doctor_name": doc_name,
+                "specialization": doc_spec,
+                "department": doc_dept,
+                "appointment_time": appt_datetime.isoformat(),
+                "status": "confirmed",
+                "reason": user_text[:100],
+            }
+
+            return {
+                "text": response_text,
+                "appointment": appointment_data,
+                "mcp_result": {
+                    "action": "book_appointment",
+                    "status": "confirmed",
+                    "appointment": appointment_data,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Error handling appointment booking: {e}")
+            return None
 
 
 # Singleton instance

@@ -219,6 +219,7 @@ async def voice_chat(
             "mcp_result": result.get("mcp_result"),
             "patient_state": result.get("patient_state"),
             "is_emergency": result.get("is_emergency", False),
+            "booked_appointment": result.get("booked_appointment"),
         }
     except Exception as e:
         import traceback

@@ -41,6 +41,20 @@ router = APIRouter(prefix="/evaluation", tags=["AI Evaluation"])
 test_runner = EvaluationTestRunner()
 
 
+@router.post("/verify-admin")
+def verify_admin(payload: dict):
+    """Verify administrator passkey for accessing the AI Evaluation Dashboard."""
+    passkey = payload.get("passkey", "").strip()
+    valid_keys = {"admin123", "medivoice2026", "clinical_admin", "admin"}
+    if passkey in valid_keys:
+        return {
+            "authorized": True,
+            "role": "clinical_administrator",
+            "message": "Administrator credentials verified successfully",
+        }
+    raise HTTPException(status_code=401, detail="Invalid administrator passkey")
+
+
 @router.get("/overview", response_model=EvaluationOverviewResponse)
 def get_evaluation_overview(db: Session = Depends(get_db)):
     """
