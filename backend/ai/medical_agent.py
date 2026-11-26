@@ -814,12 +814,33 @@ class MasterMedicalAgent:
             "fix an appointment", "బుక్", "షెడ్యూల్", "తీసుకోవాలి", "కావాలి", "నిర్ధారించు"
         ]
         appointment_words = [
-            "appointment", "consultation", "doctor", "slot", "visit",
-            "అపాయింట్‌మెంట్", "డాక్టర్", "సందర్శన", "స్లాట్"
+            "appointment", "consultation", "doctor", "slot", "visit", "checkup", "check up",
+            "అపాయింట్‌మెంట్", "డాక్టర్", "సందర్శన", "స్లాట్", "చెకప్"
         ]
         has_booking = any(w in lower or w in text for w in booking_words)
         has_appointment = any(w in lower or w in text for w in appointment_words)
-        return has_booking and has_appointment
+
+        if has_booking and has_appointment:
+            return True
+
+        # "schedule for general checkup" or "book Dr. Sarah"
+        if has_booking and any(w in lower for w in ["general", "checkup", "cardio", "neuro", "pediat", "ortho"]):
+            return True
+
+        # Time indicators + doctor or checkup (e.g. "General checkup tomorrow at 10 AM", "Dr. Priya Patel tomorrow")
+        has_time = any(w in lower for w in [
+            "tomorrow", "today", "am", "pm", "o'clock", "monday", "tuesday", "wednesday",
+            "thursday", "friday", "saturday", "sunday", "గంటలకు", "రేపు", "ఈరోజు"
+        ])
+        has_specialist = any(w in lower for w in [
+            "dr.", "doctor", "priya", "patel", "sarah", "smith", "rajesh", "rao", "emily",
+            "johnson", "david", "brown", "general checkup", "checkup", "check up",
+            "cardiology", "neurology", "pediatrics", "orthopedics", "సాధారణ", "చెకప్"
+        ])
+        if has_time and has_specialist:
+            return True
+
+        return False
 
     def _handle_appointment_booking(
         self,
