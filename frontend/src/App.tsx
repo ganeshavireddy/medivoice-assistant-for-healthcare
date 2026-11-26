@@ -920,47 +920,61 @@ export default function App() {
     transcriptRef.current = '';
     stopAudio();
 
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-
     try {
-      // 1. Always request genuine microphone stream
+      // 1. Request microphone permission
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
-      audioBuffersRef.current = [];
+      audioChunksRef.current = [];
 
-      // 2. Set up Web Audio for live volume visualizer and PCM buffer recording
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new AudioCtx({ sampleRate: 16000 });
-      audioContextRef.current = audioCtx;
+      // 2. Start MediaRecorder (native standard browser recording)
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+          mimeType = 'audio/webm';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+          mimeType = 'audio/ogg';
+        }
+        const recorder = new MediaRecorder(stream, { mimeType });
+        mediaRecorderRef.current = recorder;
+        recorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        recorder.start(100); // Collect slice every 100ms
+      }
 
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
+      // 3. AudioContext for live volume visualizer
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioCtx();
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+        audioContextRef.current = audioCtx;
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
 
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processor.onaudioprocess = (e) => {
-        const channelData = e.inputBuffer.getChannelData(0);
-        audioBuffersRef.current.push(new Float32Array(channelData));
-      };
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
-
-      // Animate volume bar so user sees their voice active
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const updateLevel = () => {
-        if (!audioStreamRef.current) return;
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-        const avg = sum / dataArray.length;
-        setAudioLevel(Math.min(100, Math.round(avg * 2.8)));
-        animFrameRef.current = requestAnimationFrame(updateLevel);
-      };
-      updateLevel();
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const updateLevel = () => {
+          if (!audioStreamRef.current) return;
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+          const avg = sum / dataArray.length;
+          setAudioLevel(Math.min(100, Math.round(avg * 3.0)));
+          animFrameRef.current = requestAnimationFrame(updateLevel);
+        };
+        updateLevel();
+      } catch (e) {
+        console.warn('AudioContext meter notice:', e);
+      }
 
       setIsRecording(true);
       setMicStatusMsg(
@@ -969,7 +983,7 @@ export default function App() {
           : '🎙️ Listening... speak clearly (click Stop & Send when done)'
       );
 
-      // 3. Simultaneously start native Web Speech API if supported
+      // 4. In parallel, run Web Speech API if supported
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
         try {
@@ -1031,13 +1045,33 @@ export default function App() {
       } catch (e) {}
     }
 
+    // Stop MediaRecorder and await final audio blob
+    let recordedBlob: Blob | null = null;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        recordedBlob = await new Promise<Blob>((resolve) => {
+          if (!mediaRecorderRef.current) {
+            resolve(new Blob(audioChunksRef.current, { type: 'audio/webm' }));
+            return;
+          }
+          mediaRecorderRef.current.onstop = () => {
+            const mime = mediaRecorderRef.current?.mimeType || 'audio/webm';
+            resolve(new Blob(audioChunksRef.current, { type: mime }));
+          };
+          mediaRecorderRef.current.stop();
+        });
+      } catch (recErr) {
+        console.warn('MediaRecorder stop error:', recErr);
+        recordedBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+      }
+    } else if (audioChunksRef.current.length > 0) {
+      recordedBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+    }
+
     if (audioStreamRef.current) {
       audioStreamRef.current.getTracks().forEach((track) => track.stop());
       audioStreamRef.current = null;
     }
-
-    const collectedText = transcriptRef.current.trim();
-    const recordedBuffers = [...audioBuffersRef.current];
 
     if (audioContextRef.current) {
       try {
@@ -1045,7 +1079,8 @@ export default function App() {
       } catch (e) {}
       audioContextRef.current = null;
     }
-    audioBuffersRef.current = [];
+
+    const collectedText = (transcriptRef.current || liveTranscript).trim();
     setIsRecording(false);
 
     // 1. If native speech recognition captured words, send immediately!
@@ -1057,9 +1092,8 @@ export default function App() {
       return;
     }
 
-    // 2. Fallback: If native speech recognition did not produce text (e.g. Brave, unsupported Chrome, no cloud STT),
-    // send the recorded PCM WAV audio to the backend!
-    if (recordedBuffers.length > 0) {
+    // 2. Fallback: If native speech recognition did not produce text, send recorded audio blob to backend!
+    if (recordedBlob && recordedBlob.size > 500) {
       try {
         setIsProcessing(true);
         setMicStatusMsg(
@@ -1068,9 +1102,8 @@ export default function App() {
             : 'Transcribing speech audio with AI voice recognizer...'
         );
 
-        const wavBlob = createWAVBlob(recordedBuffers, 16000);
         const formData = new FormData();
-        formData.append('file', wavBlob, 'recording.wav');
+        formData.append('file', recordedBlob, 'recording.webm');
         formData.append('language', language);
 
         const res = await fetch(`${API_BASE}/voice/transcribe`, {
@@ -1087,12 +1120,13 @@ export default function App() {
             setMicStatusMsg(null);
             setLiveTranscript('');
             transcriptRef.current = '';
+            audioChunksRef.current = [];
             return;
           } else {
             setMicStatusMsg(
               language === 'te'
-                ? 'వాయిస్ గుర్తించబడలేదు. దయచేసి స్పష్టంగా మాట్లాడండి లేదా క్విక్ యాక్షన్స్ ఉపయోగించండి.'
-                : 'No words detected. Please speak closer to your microphone or click the Quick Actions below.'
+                ? 'వాయిస్ గుర్తించబడలేదు. దయచేసి మైక్రోఫోన్‌కు దగ్గరగా మాట్లాడండి.'
+                : 'No words detected in audio. Please speak louder into your mic or click Quick Actions.'
             );
           }
         } else {
@@ -1105,6 +1139,7 @@ export default function App() {
         setIsProcessing(false);
         setLiveTranscript('');
         transcriptRef.current = '';
+        audioChunksRef.current = [];
       }
     } else {
       const fallbackQuery = inputQuery.trim();

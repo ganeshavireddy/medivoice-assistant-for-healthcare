@@ -1115,7 +1115,28 @@ class MasterMedicalAgent:
 
             appt_datetime = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-            # 5. Insert Appointment into Database
+            # 5. Smart Slot Allocation: Prevent double-booking for the doctor and patient
+            existing_doc_appts = db.query(Appointment).filter(
+                Appointment.doctor_id == doc_id,
+                Appointment.status != "cancelled"
+            ).all()
+            booked_times = set(a.appointment_time for a in existing_doc_appts)
+
+            was_adjusted = False
+            original_requested_time = appt_datetime
+
+            # If the requested slot is already taken, roll forward to next available opening (9 AM - 5 PM)
+            while appt_datetime in booked_times:
+                was_adjusted = True
+                appt_datetime += timedelta(hours=1)
+                # If after 5 PM, advance to 10 AM next business day
+                if appt_datetime.hour >= 17:
+                    appt_datetime = (appt_datetime + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+                # Skip Sundays (weekday 6)
+                if appt_datetime.weekday() == 6:
+                    appt_datetime = (appt_datetime + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+            # Insert Appointment into Database
             new_appt = Appointment(
                 patient_id=user_id or 1,
                 doctor_id=doc_id,
@@ -1134,6 +1155,14 @@ class MasterMedicalAgent:
             formatted_date_en = appt_datetime.strftime("%A, %B %d, %Y at %I:%M %p")
             formatted_date_te = appt_datetime.strftime("%d-%m-%Y, %I:%M %p")
 
+            slot_note_en = ""
+            slot_note_te = ""
+            if was_adjusted:
+                orig_str_en = original_requested_time.strftime("%I:%M %p")
+                orig_str_te = original_requested_time.strftime("%I:%M %p")
+                slot_note_en = f"\n\nℹ️ *Note: The {orig_str_en} slot was already booked. We have scheduled your appointment for the next available opening at **{formatted_date_en}**.*"
+                slot_note_te = f"\n\nℹ️ *గమనిక: {orig_str_te} సమయం ఇప్పటికే బుక్ చేయబడినందున, మీ అపాయింట్‌మెంట్‌ను తర్వాతి ఖాళీ సమయమైన **{formatted_date_te}** కి షెడ్యూల్ చేశాము.*"
+
             if language == "te":
                 response_text = (
                     f"### ✅ మీ అపాయింట్‌మెంట్ విజయవంతంగా బుక్ చేయబడింది!\n\n"
@@ -1141,7 +1170,8 @@ class MasterMedicalAgent:
                     f"• **విభాగం:** {doc_dept}\n"
                     f"• **తేదీ & సమయం:** {formatted_date_te}\n"
                     f"• **అపాయింట్‌మెంట్ ID:** #{appt_id}\n"
-                    f"• **స్థితి:** నిర్ధారించబడింది (Confirmed)\n\n"
+                    f"• **స్థితి:** నిర్ధారించబడింది (Confirmed)"
+                    f"{slot_note_te}\n\n"
                     f"మీ అపాయింట్‌మెంట్ సిస్టమ్‌లో నమోదైంది. మీరు దీన్ని **Appointments** ట్యాబ్‌లో చూడవచ్చు. "
                     f"దయచేసి సమయానికి 10 నిమిషాల ముందుగా హాస్పిటల్‌కు చేరుకోండి.\n\n"
                     f"⚠️ నిరాకరణ: ఇది ఆటోమేటెడ్ అపాయింట్‌మెంట్ నిర్ధారణ. అత్యవసర పరిస్థితుల్లో వెంటనే 112 లేదా 108కి కాల్ చేయండి."
@@ -1153,7 +1183,8 @@ class MasterMedicalAgent:
                     f"• **Department:** {doc_dept}\n"
                     f"• **Date & Time:** {formatted_date_en}\n"
                     f"• **Appointment ID:** #{appt_id}\n"
-                    f"• **Status:** Confirmed\n\n"
+                    f"• **Status:** Confirmed"
+                    f"{slot_note_en}\n\n"
                     f"Your appointment has been registered in your official record. You can view and manage it anytime in the **Appointments** tab. "
                     f"Please arrive 10 minutes prior to your consultation time.\n\n"
                     f"⚠️ Disclaimer: This is an automated scheduling confirmation. For urgent medical emergencies, immediately contact 112/108/911."
