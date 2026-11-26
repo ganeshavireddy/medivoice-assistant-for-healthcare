@@ -564,6 +564,7 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
+  const transcriptRef = useRef<string>('');
 
   // Audio Playback (TTS) State
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
@@ -864,6 +865,7 @@ export default function App() {
   const startRecording = async () => {
     setMicStatusMsg(null);
     setLiveTranscript('');
+    transcriptRef.current = '';
     stopAudio();
 
     // Check if SpeechRecognition is supported
@@ -879,7 +881,7 @@ export default function App() {
 
         recognition.onstart = () => {
           setIsRecording(true);
-          setMicStatusMsg('Listening... speak now into your microphone');
+          setMicStatusMsg(language === 'te' ? '🎙️ వినబడుతోంది... మైక్రోఫోన్‌లో స్పష్టంగా మాట్లాడండి' : '🎙️ Listening... speak clearly into your microphone');
         };
 
         recognition.onresult = (event: any) => {
@@ -888,15 +890,20 @@ export default function App() {
             currentSessionText += event.results[i][0].transcript + ' ';
           }
           const trimmed = currentSessionText.trim();
-          setLiveTranscript(trimmed);
-          setInputQuery(trimmed);
+          if (trimmed) {
+            transcriptRef.current = trimmed;
+            setLiveTranscript(trimmed);
+            setInputQuery(trimmed);
+          }
         };
 
         recognition.onerror = (e: any) => {
           console.warn('SpeechRecognition error:', e.error);
           if (e.error === 'not-allowed') {
-            setMicStatusMsg('Microphone access blocked. Please allow microphone permissions in your browser.');
+            setMicStatusMsg('Microphone access blocked. Please allow microphone permissions in your browser address bar.');
             setIsRecording(false);
+          } else if (e.error === 'no-speech') {
+            setMicStatusMsg('No speech detected. Please speak clearly or click the quick actions below.');
           } else {
             // Try MediaRecorder fallback
             startMediaRecorderFallback();
@@ -905,6 +912,13 @@ export default function App() {
 
         recognition.onend = () => {
           setIsRecording(false);
+          // If speech was recorded before the browser ended, send automatically!
+          const finalSpeech = transcriptRef.current.trim();
+          if (finalSpeech.length > 1) {
+            handleSendMessage(finalSpeech);
+            transcriptRef.current = '';
+            setLiveTranscript('');
+          }
         };
 
         recognition.start();
@@ -973,14 +987,18 @@ export default function App() {
       } catch (e) {}
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {}
     }
     setIsRecording(false);
 
     // If we have live transcript or input query, send it
-    const textToSend = (liveTranscript || inputQuery).trim();
+    const textToSend = (transcriptRef.current || liveTranscript || inputQuery).trim();
     if (textToSend.length > 1) {
       handleSendMessage(textToSend);
+      transcriptRef.current = '';
+      setLiveTranscript('');
     }
   };
 
@@ -1470,6 +1488,83 @@ export default function App() {
                   {micStatusMsg}
                 </div>
               )}
+
+              {/* Quick Voice & Action Shortcuts */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 18px',
+                  backgroundColor: '#f8fafc',
+                  borderTop: '1px solid #f1f5f9',
+                  overflowX: 'auto',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#64748b',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Quick Actions:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSendMessage('Can you schedule the appointment for general checkup')}
+                  style={{
+                    padding: '4px 10px',
+                    backgroundColor: '#e0f2fe',
+                    color: '#0369a1',
+                    border: '1px solid #bae6fd',
+                    borderRadius: '12px',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  📅 Schedule General Checkup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendMessage('Book appointment with Dr. Sarah Smith tomorrow at 10 AM')}
+                  style={{
+                    padding: '4px 10px',
+                    backgroundColor: '#f1f5f9',
+                    color: '#334155',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    fontSize: '11.5px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  ❤️ Cardiology (Dr. Sarah Smith)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendMessage('డాక్టర్ ప్రియా పటేల్‌తో రేపు ఉదయం 10 గంటలకు జనరల్ చెకప్ అపాయింట్‌మెంట్ బుక్ చేయండి')}
+                  style={{
+                    padding: '4px 10px',
+                    backgroundColor: '#fef3c7',
+                    color: '#92400e',
+                    border: '1px solid #fde68a',
+                    borderRadius: '12px',
+                    fontSize: '11.5px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  🗣️ తెలుగు: జనరల్ చెకప్ బుక్ చేయండి
+                </button>
+              </div>
 
               {/* Bottom Input Bar */}
               <div

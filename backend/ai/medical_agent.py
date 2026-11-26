@@ -860,23 +860,87 @@ class MasterMedicalAgent:
                     selected_doctor = doc
                     break
 
-            # 2. Match by specialization if name not matched
+            # 2. Match by specialization or symptoms/service
             if not selected_doctor:
                 for doc in doctors:
                     spec_low = doc.specialization.lower()
-                    if (
-                        spec_low in lower
-                        or (spec_low == "cardiology" and "cardio" in lower)
-                        or (spec_low == "neurology" and "neuro" in lower)
-                        or (spec_low == "pediatrics" and "pediat" in lower)
-                        or (spec_low == "orthopedics" and "ortho" in lower)
-                    ):
-                        selected_doctor = doc
-                        break
+                    # General Practice / General Checkup
+                    if "general" in spec_low:
+                        if any(w in lower for w in [
+                            "general", "checkup", "check up", "check-up", "routine", "primary care",
+                            "physician", "fever", "cold", "body pain", "flu", "cough", "weakness",
+                            "regular checkup", "annual checkup", "health checkup", "సాధారణ", "చెకప్"
+                        ]):
+                            selected_doctor = doc
+                            break
+                    # Cardiology
+                    elif "cardio" in spec_low:
+                        if any(w in lower for w in [
+                            "cardio", "cardiologist", "cardiology", "heart", "blood pressure",
+                            "hypertension", "bp", "chest", "గుండె", "రక్తపోటు"
+                        ]):
+                            selected_doctor = doc
+                            break
+                    # Neurology
+                    elif "neuro" in spec_low:
+                        if any(w in lower for w in [
+                            "neuro", "neurology", "neurologist", "brain", "headache", "migraine",
+                            "nerve", "dizziness", "seizure", "మెదడు", "నరాల", "తలనొప్పి"
+                        ]):
+                            selected_doctor = doc
+                            break
+                    # Pediatrics
+                    elif "pediat" in spec_low:
+                        if any(w in lower for w in [
+                            "pediat", "pediatrics", "pediatrician", "child", "children", "baby",
+                            "infant", "kid", "son", "daughter", "పిల్లల"
+                        ]):
+                            selected_doctor = doc
+                            break
+                    # Orthopedics
+                    elif "ortho" in spec_low:
+                        if any(w in lower for w in [
+                            "ortho", "orthopedics", "orthopedic", "bone", "joint", "knee",
+                            "fracture", "spine", "back pain", "arthritis", "shoulder", "ఎముకల", "కీళ్ల"
+                        ]):
+                            selected_doctor = doc
+                            break
 
-            # 3. Default to first doctor if unspecified
+            # If user asked to schedule an appointment but did NOT specify any doctor or checkup type:
+            # Proactively ask the user which doctor and date & time they need.
             if not selected_doctor:
-                selected_doctor = doctors[0]
+                db.close()
+                if language == "te":
+                    prompt_msg = (
+                        "### 📅 హాస్పిటల్ అపాయింట్‌మెంట్ షెడ్యూల్\n\n"
+                        "నేను మీ కోసం అపాయింట్‌మెంట్‌ను మాన్యువల్ ఫారమ్‌లు లేకుండా ఆటోమేటిక్‌గా షెడ్యూల్ చేస్తాను! దయచేసి క్రింది వివరాలు తెలియజేయండి:\n\n"
+                        "1. **మీకు ఏ వైద్యులు లేదా విభాగం కావాలి?**\n"
+                        "   • **Dr. Priya Patel** — జనరల్ ప్రాక్టీస్ (సాధారణ చెకప్ & ప్రాథమిక వైద్యం)\n"
+                        "   • **Dr. Sarah Smith** — కార్డియాలజీ (గుండె & రక్తపోటు నిపుణులు)\n"
+                        "   • **Dr. Rajesh Rao** — న్యూరాలజీ (మెదడు, నరాలు & తలనొప్పి)\n"
+                        "   • **Dr. Emily Johnson** — పీడియాట్రిక్స్ (పిల్లల నిపుణులు)\n"
+                        "   • **Dr. David Brown** — ఆర్థోపెడిక్స్ (ఎముకలు & కీళ్ల నిపుణులు)\n\n"
+                        "2. **మీకు అనుకూలమైన తేదీ మరియు సమయం ఏమిటి?** (ఉదాహరణకు: *రేపు ఉదయం 10 గంటలకు*, *ఈరోజు సాయంత్రం 4 గంటలకు*, లేదా *శుక్రవారం 11 గంటలకు*)\n\n"
+                        "మీరు డాక్టర్ పేరు లేదా విభాగం మరియు సమయం చెప్పగానే, నేను వెంటనే మీ అపాయింట్‌మెంట్‌ను ఆటోమేటిక్‌గా షెడ్యూల్ చేస్తాను!"
+                    )
+                else:
+                    prompt_msg = (
+                        "### 📅 Hospital Appointment Scheduling\n\n"
+                        "I will be glad to schedule your appointment automatically without any manual forms! Please let me know:\n\n"
+                        "1. **Which doctor or specialty would you like to see?**\n"
+                        "   • **Dr. Priya Patel** — General Practice (Primary Care & General Checkups)\n"
+                        "   • **Dr. Sarah Smith** — Cardiology (Heart & Blood Pressure)\n"
+                        "   • **Dr. Rajesh Rao** — Neurology (Headache, Brain & Nerve Care)\n"
+                        "   • **Dr. Emily Johnson** — Pediatrics (Children's Health)\n"
+                        "   • **Dr. David Brown** — Orthopedics (Bones & Joints)\n\n"
+                        "2. **What date and time works best for you?** (e.g., *Tomorrow at 10 AM*, *Today at 4 PM*, or *Friday at 11 AM*)\n\n"
+                        "Simply reply with the doctor name or checkup type and your preferred time, and I will confirm your booking immediately!"
+                    )
+                return {
+                    "text": prompt_msg,
+                    "appointment": None,
+                    "mcp_result": {"action": "ask_appointment_details", "status": "awaiting_input"},
+                }
 
             doc_id = selected_doctor.id
             doc_name = selected_doctor.name
