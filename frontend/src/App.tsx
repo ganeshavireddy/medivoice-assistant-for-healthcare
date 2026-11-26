@@ -561,6 +561,8 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [micStatusMsg, setMicStatusMsg] = useState<string | null>(null);
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const animFrameRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
@@ -923,134 +925,105 @@ export default function App() {
       silenceTimerRef.current = null;
     }
 
-    // 1. Try Native Web Speech API (Chrome, Edge, Safari, Android)
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (SpeechRecognition) {
-      try {
-        const recognition = new SpeechRecognition();
-        recognitionRef.current = recognition;
-        recognition.lang = language === 'te' ? 'te-IN' : 'en-US';
-        recognition.continuous = true; // Continuous listening so pauses don't cut user off
-        recognition.interimResults = true;
-        recognition.maxAlternatives = 1;
-
-        recognition.onstart = () => {
-          setIsRecording(true);
-          setMicStatusMsg(
-            language === 'te'
-              ? '🎙️ వింటున్నాను... మైక్రోఫోన్‌లో మాట్లాడండి (పూర్తయిన తర్వాత ఆపండి)'
-              : '🎙️ Listening... speak clearly into your mic (click Stop when finished)'
-          );
-        };
-
-        recognition.onresult = (event: any) => {
-          let final = '';
-          let interim = '';
-          for (let i = 0; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              final += event.results[i][0].transcript + ' ';
-            } else {
-              interim += event.results[i][0].transcript;
-            }
-          }
-          const fullText = (final || interim || '').trim();
-          if (fullText) {
-            transcriptRef.current = fullText;
-            setLiveTranscript(fullText);
-            setInputQuery(fullText);
-
-            // Reset silence auto-submit timer (auto-submit after 3 seconds of silence)
-            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(() => {
-              const textToSend = transcriptRef.current.trim();
-              if (textToSend.length > 2 && isRecording) {
-                stopRecording();
-              }
-            }, 3000);
-          }
-        };
-
-        recognition.onerror = (e: any) => {
-          console.warn('SpeechRecognition error:', e.error);
-          if (e.error === 'not-allowed') {
-            setMicStatusMsg(
-              language === 'te'
-                ? 'దయచేసి మీ బ్రౌజర్‌లో మైక్రోఫోన్ అనుమతిని (Allow Microphone) ఆన్ చేయండి.'
-                : 'Microphone access blocked. Please allow mic permissions in your browser address bar.'
-            );
-            setIsRecording(false);
-          } else if (e.error === 'no-speech') {
-            // Keep listening, don't abort immediately
-            setMicStatusMsg('Listening... speak when ready.');
-          } else {
-            startMediaRecorderFallback();
-          }
-        };
-
-        recognition.onend = () => {
-          if (isRecording) {
-            // Only finalize if we haven't manually stopped
-            const finalSpeech = transcriptRef.current.trim();
-            if (finalSpeech.length > 1) {
-              handleSendMessage(finalSpeech);
-              transcriptRef.current = '';
-              setLiveTranscript('');
-              setMicStatusMsg(null);
-            }
-            setIsRecording(false);
-          }
-        };
-
-        recognition.start();
-        return;
-      } catch (e) {
-        console.warn('SpeechRecognition start error, falling back to WebAudio WAV recorder:', e);
-      }
-    }
-
-    startMediaRecorderFallback();
-  };
-
-  const startMediaRecorderFallback = async () => {
     try {
+      // 1. Always request genuine microphone stream
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
       audioBuffersRef.current = [];
 
+      // 2. Set up Web Audio for live volume visualizer and PCM buffer recording
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       const audioCtx = new AudioCtx({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;
 
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
       const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      source.connect(analyser);
 
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processor.onaudioprocess = (e) => {
         const channelData = e.inputBuffer.getChannelData(0);
         audioBuffersRef.current.push(new Float32Array(channelData));
       };
-
       source.connect(processor);
       processor.connect(audioCtx.destination);
 
+      // Animate volume bar so user sees their voice active
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const updateLevel = () => {
+        if (!audioStreamRef.current) return;
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const avg = sum / dataArray.length;
+        setAudioLevel(Math.min(100, Math.round(avg * 2.8)));
+        animFrameRef.current = requestAnimationFrame(updateLevel);
+      };
+      updateLevel();
+
       setIsRecording(true);
-      setMicStatusMsg('Recording audio... click Mic again to send');
-    } catch (err) {
-      console.warn('Microphone permission blocked or unavailable:', err);
       setMicStatusMsg(
         language === 'te'
-          ? 'మైక్రోఫోన్ అనుమతి అవసరం. దయచేసి అనుమతించండి లేదా క్రింది బటన్లను వాడండి.'
-          : 'Microphone permission blocked. Please allow mic access or use quick action buttons below.'
+          ? '🎙️ వింటున్నాను... మాట్లాడండి (పూర్తయ్యాక Stop & Send నొక్కండి)'
+          : '🎙️ Listening... speak clearly (click Stop & Send when done)'
+      );
+
+      // 3. Simultaneously start native Web Speech API if supported
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognitionRef.current = recognition;
+          recognition.lang = language === 'te' ? 'te-IN' : 'en-US';
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.maxAlternatives = 1;
+
+          recognition.onresult = (event: any) => {
+            let final = '';
+            let interim = '';
+            for (let i = 0; i < event.results.length; i++) {
+              if (event.results[i].isFinal) {
+                final += event.results[i][0].transcript + ' ';
+              } else {
+                interim += event.results[i][0].transcript;
+              }
+            }
+            const fullText = (final || interim || '').trim();
+            if (fullText) {
+              transcriptRef.current = fullText;
+              setLiveTranscript(fullText);
+              setInputQuery(fullText);
+            }
+          };
+
+          recognition.onerror = (e: any) => {
+            console.warn('Native speech recognition notice:', e.error);
+          };
+
+          recognition.start();
+        } catch (recErr) {
+          console.warn('Native speech recognition start notice:', recErr);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Microphone access failed:', err);
+      setMicStatusMsg(
+        language === 'te'
+          ? 'దయచేసి మీ బ్రౌజర్‌లో మైక్రోఫోన్ అనుమతిని (Allow Microphone) ఆన్ చేయండి.'
+          : 'Microphone permission blocked. Please allow mic permissions in your browser address bar.'
       );
       setIsRecording(false);
     }
   };
 
   const stopRecording = async () => {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
     }
+    setAudioLevel(0);
 
     if (recognitionRef.current) {
       try {
@@ -1058,25 +1031,47 @@ export default function App() {
       } catch (e) {}
     }
 
-    // Stop Web Audio fallback if active
     if (audioStreamRef.current) {
       audioStreamRef.current.getTracks().forEach((track) => track.stop());
       audioStreamRef.current = null;
     }
 
-    if (audioContextRef.current && audioBuffersRef.current.length > 0) {
-      try {
-        const wavBlob = createWAVBlob(audioBuffersRef.current, 16000);
-        audioContextRef.current.close();
-        audioContextRef.current = null;
-        audioBuffersRef.current = [];
+    const collectedText = transcriptRef.current.trim();
+    const recordedBuffers = [...audioBuffersRef.current];
 
-        // Send genuine PCM WAV to backend /voice/transcribe
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
+    audioBuffersRef.current = [];
+    setIsRecording(false);
+
+    // 1. If native speech recognition captured words, send immediately!
+    if (collectedText.length > 0) {
+      handleSendMessage(collectedText);
+      transcriptRef.current = '';
+      setLiveTranscript('');
+      setMicStatusMsg(null);
+      return;
+    }
+
+    // 2. Fallback: If native speech recognition did not produce text (e.g. Brave, unsupported Chrome, no cloud STT),
+    // send the recorded PCM WAV audio to the backend!
+    if (recordedBuffers.length > 0) {
+      try {
+        setIsProcessing(true);
+        setMicStatusMsg(
+          language === 'te'
+            ? 'వాయిస్ ప్రాసెస్ అవుతోంది...'
+            : 'Transcribing speech audio with AI voice recognizer...'
+        );
+
+        const wavBlob = createWAVBlob(recordedBuffers, 16000);
         const formData = new FormData();
         formData.append('file', wavBlob, 'recording.wav');
-
-        setIsProcessing(true);
-        setMicStatusMsg('Transcribing speech...');
+        formData.append('language', language);
 
         const res = await fetch(`${API_BASE}/voice/transcribe`, {
           method: 'POST',
@@ -1085,31 +1080,37 @@ export default function App() {
 
         if (res.ok) {
           const data = await res.json();
-          if (data.transcription && data.transcription.trim()) {
-            setInputQuery(data.transcription);
-            handleSendMessage(data.transcription);
+          const transcription = (data.transcription || '').trim();
+          if (transcription.length > 0) {
+            setInputQuery(transcription);
+            handleSendMessage(transcription);
             setMicStatusMsg(null);
-            setIsRecording(false);
-            setIsProcessing(false);
+            setLiveTranscript('');
+            transcriptRef.current = '';
             return;
+          } else {
+            setMicStatusMsg(
+              language === 'te'
+                ? 'వాయిస్ గుర్తించబడలేదు. దయచేసి స్పష్టంగా మాట్లాడండి లేదా క్విక్ యాక్షన్స్ ఉపయోగించండి.'
+                : 'No words detected. Please speak closer to your microphone or click the Quick Actions below.'
+            );
           }
+        } else {
+          setMicStatusMsg('Failed to transcribe audio from server.');
         }
       } catch (e) {
-        console.error('Fallback transcription error:', e);
+        console.error('Transcription error:', e);
+        setMicStatusMsg('Error communicating with voice recognition server.');
       } finally {
         setIsProcessing(false);
+        setLiveTranscript('');
+        transcriptRef.current = '';
       }
-    }
-
-    setIsRecording(false);
-
-    // If we have live transcript or input query from SpeechRecognition, send it
-    const textToSend = (transcriptRef.current || liveTranscript || inputQuery).trim();
-    if (textToSend.length > 0) {
-      handleSendMessage(textToSend);
-      transcriptRef.current = '';
-      setLiveTranscript('');
-      setMicStatusMsg(null);
+    } else {
+      const fallbackQuery = inputQuery.trim();
+      if (fallbackQuery.length > 0) {
+        handleSendMessage(fallbackQuery);
+      }
     }
   };
 
@@ -1557,11 +1558,22 @@ export default function App() {
                       }}
                     />
                     <div>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
-                        {language === 'te' ? 'వింటున్నాను... మాట్లాడండి' : 'Listening... Speak clearly'}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
+                          {language === 'te' ? 'వింటున్నాను... మాట్లాడండి' : 'Listening... Speak clearly'}
+                        </span>
+                        {/* Live Audio Visualizer / Volume Level */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <div style={{ width: '60px', height: '6px', backgroundColor: '#fee2e2', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ width: `${Math.max(10, audioLevel)}%`, height: '100%', backgroundColor: audioLevel > 15 ? '#16a34a' : '#dc2626', transition: 'width 0.1s ease' }} />
+                          </div>
+                          <span style={{ fontSize: '10.5px', fontWeight: 600, color: audioLevel > 15 ? '#16a34a' : '#991b1b' }}>
+                            {audioLevel > 15 ? (language === 'te' ? '● స్వరం నమోదవుతోంది' : '● Voice detected') : ''}
+                          </span>
+                        </div>
                       </div>
-                      <div style={{ fontSize: '12px', color: '#b91c1c', fontStyle: 'italic' }}>
-                        {liveTranscript || (language === 'te' ? 'మీ ప్రశ్నను చెప్పండి...' : 'Say your symptoms or question...')}
+                      <div style={{ fontSize: '12px', color: '#b91c1c', fontStyle: 'italic', marginTop: '2px' }}>
+                        {liveTranscript || (language === 'te' ? 'మీ ప్రశ్నను చెప్పండి (పూర్తయ్యాక Stop & Send నొక్కండి)...' : 'Say your symptoms or question (click Stop & Send when done)...')}
                       </div>
                     </div>
                   </div>

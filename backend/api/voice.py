@@ -4,7 +4,7 @@ MediVoice AI - Voice API Endpoints
 Handles speech-to-text, text-to-speech, and voice conversation flow with Edge-TTS and Whisper.
 """
 
-from fastapi import APIRouter, UploadFile, File, WebSocket, BackgroundTasks, Response, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, WebSocket, BackgroundTasks, Response, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from schemas import TranscribeRequest, TranscribeResponse, SpeakRequest, SpeakResponse, VoiceChatRequest, VoiceChatResponse
 from config import settings, API_V1_PREFIX
@@ -99,58 +99,87 @@ async def generate_audio_bytes(text: str, language: str = "en") -> bytes:
     return audio_stream.read()
 
 
-@router.post("/transcribe", response_model=TranscribeResponse)
-async def transcribe_audio(file: UploadFile = File(...)):
-    """Transcribe audio using SpeechRecognition or Faster-Whisper."""
-    content = await file.read()
-    
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
-    
-    transcription = ""
-    detected_lang = "en"
-    
-    # 1. Try SpeechRecognition (Google API - fast, lightweight, accurate)
+def decode_audio_to_pcm(content: bytes) -> bytes:
+    """
+    Decodes any audio container (WebM, OGG, WAV, MP4, AAC) into standard
+    16kHz 16-bit Mono PCM bytes using PyAV.
+    """
     try:
-        import speech_recognition as sr
-        r = sr.Recognizer()
-        with sr.AudioFile(tmp_path) as source:
-            audio_data = r.record(source)
-            # Recognize speech
+        import av
+        inp = io.BytesIO(content)
+        container = av.open(inp)
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        pcm_chunks = []
+        for frame in container.decode(audio=0):
+            resampled_frames = resampler.resample(frame)
+            for r_frame in resampled_frames:
+                pcm_chunks.append(r_frame.to_ndarray().tobytes())
+        return b"".join(pcm_chunks)
+    except Exception as e:
+        logger.warning(f"Audio decoding notice: {e}")
+        return b""
+
+
+@router.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+):
+    """
+    Transcribes spoken audio into text. Supports any incoming audio format
+    (WebM, OGG, WAV) using PyAV and Google Speech Recognition API.
+    """
+    content = await file.read()
+    transcription = ""
+    detected_lang = language or "en"
+    
+    primary_lang = "te-IN" if language == "te" else "en-US"
+    secondary_lang = "en-US" if language == "te" else "te-IN"
+
+    # 1. Try PyAV PCM decoding + SpeechRecognition (handles WebM, OGG, WAV seamlessly)
+    pcm_bytes = decode_audio_to_pcm(content)
+    if pcm_bytes:
+        try:
+            import speech_recognition as sr
+            r = sr.Recognizer()
+            audio_data = sr.AudioData(pcm_bytes, 16000, 2)
             try:
-                transcription = r.recognize_google(audio_data, language="en-US")
-                detected_lang = "en"
+                transcription = r.recognize_google(audio_data, language=primary_lang)
+                detected_lang = language
             except Exception:
-                # Try Telugu recognition
                 try:
-                    transcription = r.recognize_google(audio_data, language="te-IN")
-                    detected_lang = "te"
+                    transcription = r.recognize_google(audio_data, language=secondary_lang)
+                    detected_lang = "te" if secondary_lang == "te-IN" else "en"
                 except Exception:
                     pass
-    except Exception as e:
-        logger.debug(f"SpeechRecognition notice: {e}")
-    
-    # 2. Try Faster-Whisper if available
+        except Exception as e:
+            logger.debug(f"PCM transcription error: {e}")
+
+    # 2. Fallback: Write to temporary file and inspect via sr.AudioFile
     if not transcription:
         try:
-            model = get_whisper_model()
-            if model:
-                segments, info = model.transcribe(tmp_path, beam_size=3)
-                texts = [segment.text for segment in segments]
-                if texts:
-                    transcription = "".join(texts).strip()
-                detected_lang = getattr(info, "language", "en")
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            try:
+                import speech_recognition as sr
+                r = sr.Recognizer()
+                with sr.AudioFile(tmp_path) as source:
+                    audio_data = r.record(source)
+                    try:
+                        transcription = r.recognize_google(audio_data, language=primary_lang)
+                    except Exception:
+                        transcription = r.recognize_google(audio_data, language=secondary_lang)
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
         except Exception as e:
-            logger.debug(f"Whisper transcription notice: {e}")
-    
-    # Clean up temporary audio file
-    if os.path.exists(tmp_path):
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-    
+            logger.debug(f"Temporary file AudioFile transcription notice: {e}")
+
+    logger.info(f"Transcribed audio: '{transcription}' (lang={detected_lang})")
     return {"transcription": transcription, "language": detected_lang}
 
 
