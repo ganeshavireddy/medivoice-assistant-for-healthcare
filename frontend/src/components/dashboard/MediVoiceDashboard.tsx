@@ -51,7 +51,7 @@ interface MediVoiceDashboardProps {
   appointments: Appointment[];
   doctors: Doctor[];
   reports: MedicalReportItem[];
-  onNavigateTab: (tab: 'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation') => void;
+  onNavigateTab: (tab: 'home' | 'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation') => void;
   onQuickVoicePrompt: (prompt: string) => void;
   onCancelAppointment: (id: number) => Promise<void>;
   backendOnline: boolean | null;

@@ -33,6 +33,7 @@ import {
   LogOut,
   ShieldAlert,
   LayoutDashboard,
+  Home,
 } from 'lucide-react';
 import { EvaluationDashboard } from './pages/EvaluationDashboard';
 import { MediVoiceDashboard } from './components/dashboard/MediVoiceDashboard';
@@ -543,7 +544,7 @@ function StructuredMedicalMessage({ text, isEmergencyMsg }: { text: string; isEm
 // MAIN APPLICATION COMPONENT
 // ---------------------------------------------------------------------------
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'home' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation'>('home');
   const [language, setLanguage] = useState<'en' | 'te'>('en');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
@@ -1273,7 +1274,7 @@ export default function App() {
         {/* Tab Buttons */}
         <nav style={{ display: 'flex', gap: '8px', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
           <button
-            onClick={() => setActiveTab('dashboard')}
+            onClick={() => setActiveTab('home')}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -1281,15 +1282,15 @@ export default function App() {
               padding: '8px 16px',
               fontSize: '14px',
               fontWeight: 500,
-              backgroundColor: activeTab === 'dashboard' ? '#ffffff' : 'transparent',
-              color: activeTab === 'dashboard' ? '#0284c7' : '#64748b',
-              boxShadow: activeTab === 'dashboard' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              backgroundColor: activeTab === 'home' ? '#ffffff' : 'transparent',
+              color: activeTab === 'home' ? '#0284c7' : '#64748b',
+              boxShadow: activeTab === 'home' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               borderRadius: '8px',
               border: 'none',
               cursor: 'pointer',
             }}
           >
-            <LayoutDashboard size={16} /> {language === 'te' ? 'డ్యాష్‌బోర్డ్' : 'Dashboard'}
+            <Home size={16} /> {language === 'te' ? 'హోమ్' : 'Home'}
           </button>
           <button
             onClick={() => setActiveTab('voice')}
@@ -1437,14 +1438,14 @@ export default function App() {
 
       {/* Main Container */}
       <main style={{ flex: 1, padding: '20px 24px', maxWidth: '1250px', margin: '0 auto', width: '100%' }}>
-        {/* TAB 0: MEDIVOICE CLINICAL DASHBOARD */}
-        {activeTab === 'dashboard' && (
+        {/* TAB 0: HOME CLINICAL DASHBOARD */}
+        {activeTab === 'home' && (
           <MediVoiceDashboard
             language={language}
             appointments={appointments}
             doctors={doctors}
             reports={reports}
-            onNavigateTab={setActiveTab}
+            onNavigateTab={(tab) => setActiveTab(tab === 'dashboard' ? 'home' : tab as any)}
             onQuickVoicePrompt={handleQuickVoicePrompt}
             onCancelAppointment={handleCancelAppointment}
             backendOnline={backendOnline}

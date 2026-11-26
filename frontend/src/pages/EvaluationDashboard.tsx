@@ -155,8 +155,16 @@ export const EvaluationDashboard: React.FC<DashboardProps> = ({ apiHost }) => {
   const handleAddTestCase = async (newCase: Partial<TestCase>) => {
     await service.createTestCase(newCase);
     setNotification('New evaluation test case created successfully.');
-    const updated = await service.getTestCases();
-    setTestCases(updated || []);
+    try {
+      const [updatedCases, updatedOverview] = await Promise.all([
+        service.getTestCases(),
+        service.getOverview(),
+      ]);
+      setTestCases(updatedCases || []);
+      if (updatedOverview) setOverview(updatedOverview);
+    } catch (e) {
+      console.error(e);
+    }
     setTimeout(() => setNotification(null), 4000);
   };
 
@@ -166,7 +174,7 @@ export const EvaluationDashboard: React.FC<DashboardProps> = ({ apiHost }) => {
   };
 
   const tabs: Array<{ id: TabType; label: string; icon: any }> = [
-    { id: 'overview', label: 'Overview', icon: Activity },
+    { id: 'overview', label: 'Evaluation Dashboard', icon: Activity },
     { id: 'rag', label: 'RAG Retrieval', icon: Search },
     { id: 'llm', label: 'LLM Response', icon: CheckCircle2 },
     { id: 'safety', label: 'Medical Safety', icon: ShieldAlert },
@@ -320,9 +328,12 @@ export const EvaluationDashboard: React.FC<DashboardProps> = ({ apiHost }) => {
         {activeSubTab === 'overview' && (
           <EvaluationOverview
             data={overview}
+            testCases={testCases}
+            runs={runs}
             loading={loading && !overview}
             onRunEvaluation={handleRunFullEvaluation}
             isRunning={isRunning}
+            onRefresh={loadAllMetrics}
           />
         )}
 
