@@ -40,7 +40,7 @@ except Exception as e:
         if os.path.exists("/app"):
             db_file = "/app/backend/data/medivoice.db"
         else:
-            db_file = "./medivoice.db"
+            db_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "medivoice.db")
 
     db_dir = os.path.dirname(os.path.abspath(db_file))
     if db_dir:
@@ -177,6 +177,10 @@ except Exception as e:
 
 def create_db_and_tables():
     """Create all database tables."""
+    try:
+        from evaluation import models as eval_models
+    except Exception as e:
+        logger.warning(f"Evaluation models registration notice: {e}")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created successfully")
 

@@ -32,8 +32,10 @@ import {
   KeyRound,
   LogOut,
   ShieldAlert,
+  LayoutDashboard,
 } from 'lucide-react';
 import { EvaluationDashboard } from './pages/EvaluationDashboard';
+import { MediVoiceDashboard } from './components/dashboard/MediVoiceDashboard';
 
 interface Doctor {
   id: number;
@@ -541,7 +543,7 @@ function StructuredMedicalMessage({ text, isEmergencyMsg }: { text: string; isEm
 // MAIN APPLICATION COMPONENT
 // ---------------------------------------------------------------------------
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation'>('voice');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation'>('dashboard');
   const [language, setLanguage] = useState<'en' | 'te'>('en');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
@@ -586,6 +588,7 @@ export default function App() {
   const [bookingStatus, setBookingStatus] = useState<string | null>(null);
 
   // Reports State
+  const [reports, setReports] = useState<any[]>([]);
   const [reportFile, setReportFile] = useState<File | null>(null);
   const [reportSummary, setReportSummary] = useState<string | null>(null);
   const [reportParameters, setReportParameters] = useState<any[]>([]);
@@ -688,9 +691,28 @@ export default function App() {
     }
   };
 
+  const fetchReports = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/reports/`);
+      if (res.ok) {
+        const data = await res.json();
+        setReports(data);
+      }
+    } catch (e) {
+      console.debug('Fetch reports notice:', e);
+    }
+  };
+
+  const handleQuickVoicePrompt = (prompt: string) => {
+    setActiveTab('voice');
+    setInputQuery(prompt);
+    handleSendMessage(prompt);
+  };
+
   useEffect(() => {
     fetchDoctors();
     fetchAppointments();
+    fetchReports();
   }, []);
 
   // -------------------------------------------------------------------------
@@ -1014,6 +1036,22 @@ export default function App() {
 
           recognition.onerror = (e: any) => {
             console.warn('Native speech recognition notice:', e.error);
+            if (e.error === 'not-allowed') {
+              setMicStatusMsg(
+                language === 'te'
+                  ? 'మైక్రోఫోన్ అనుమతి నిరాకరించబడింది. బ్రౌజర్‌లో మైక్రోఫోన్ అనుమతించండి.'
+                  : 'Microphone permission blocked. Please allow mic in browser address bar.'
+              );
+            }
+          };
+
+          recognition.onend = () => {
+            // Keep listening if recording is still active
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+              try {
+                recognition.start();
+              } catch (e) {}
+            }
           };
 
           recognition.start();
@@ -1235,6 +1273,25 @@ export default function App() {
         {/* Tab Buttons */}
         <nav style={{ display: 'flex', gap: '8px', backgroundColor: '#f1f5f9', padding: '4px', borderRadius: '10px' }}>
           <button
+            onClick={() => setActiveTab('dashboard')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              fontSize: '14px',
+              fontWeight: 500,
+              backgroundColor: activeTab === 'dashboard' ? '#ffffff' : 'transparent',
+              color: activeTab === 'dashboard' ? '#0284c7' : '#64748b',
+              boxShadow: activeTab === 'dashboard' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              borderRadius: '8px',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            <LayoutDashboard size={16} /> {language === 'te' ? 'డ్యాష్‌బోర్డ్' : 'Dashboard'}
+          </button>
+          <button
             onClick={() => setActiveTab('voice')}
             style={{
               display: 'flex',
@@ -1380,6 +1437,20 @@ export default function App() {
 
       {/* Main Container */}
       <main style={{ flex: 1, padding: '20px 24px', maxWidth: '1250px', margin: '0 auto', width: '100%' }}>
+        {/* TAB 0: MEDIVOICE CLINICAL DASHBOARD */}
+        {activeTab === 'dashboard' && (
+          <MediVoiceDashboard
+            language={language}
+            appointments={appointments}
+            doctors={doctors}
+            reports={reports}
+            onNavigateTab={setActiveTab}
+            onQuickVoicePrompt={handleQuickVoicePrompt}
+            onCancelAppointment={handleCancelAppointment}
+            backendOnline={backendOnline}
+          />
+        )}
+
         {/* TAB 1: VOICE ASSISTANT */}
         {activeTab === 'voice' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px', height: 'calc(100vh - 130px)' }}>
