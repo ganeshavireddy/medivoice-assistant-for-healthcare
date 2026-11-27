@@ -11,7 +11,7 @@ from jose import JWTError, jwt
 from typing import Optional, Dict, Any, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from config import API_V1_PREFIX
+from config import API_V1_PREFIX, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # OAuth2 scheme
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{API_V1_PREFIX}/auth/login")
@@ -34,13 +34,7 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-# JWT token management
-SECRET_KEY = "change-this-in-production"  # Should come from environment
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-
-def create_access_token(data: Dict[str, str], expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
     if expires_delta:
@@ -59,6 +53,7 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return {
             "username": payload.get("sub"),
+            "role": payload.get("role", "patient"),
             "expires": payload.get("exp"),
             "iat": payload.get("iat"),
         }
@@ -75,11 +70,15 @@ def get_current_user(
     if payload is None:
         return None
 
-    username: str = payload.get("sub")
+    username: Optional[str] = payload.get("username")
     if username is None:
         return None
 
-    return {"username": username, "type": "authenticated", "role": "patient"}
+    return {
+        "username": username,
+        "type": "authenticated",
+        "role": payload.get("role", "patient"),
+    }
 
 
 def require_role(

@@ -4,6 +4,8 @@ MediVoice AI - Medical Report API Endpoints
 Handles medical report upload, extraction, and clinical lab test analysis.
 """
 
+import io
+import json
 import os
 import re
 import uuid
@@ -107,12 +109,20 @@ async def upload_medical_report(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # Attempt text extraction
+    # Attempt text extraction (use pdfplumber for PDFs, fallback to UTF-8 text)
     extracted_text = ""
-    try:
-        extracted_text = content.decode("utf-8", errors="ignore")
-    except Exception:
-        extracted_text = ""
+    if file_ext == "pdf":
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                extracted_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        except Exception:
+            extracted_text = ""
+    if not extracted_text:
+        try:
+            extracted_text = content.decode("utf-8", errors="ignore")
+        except Exception:
+            extracted_text = ""
 
     parsed_parameters = parse_lab_parameters_from_text(extracted_text)
 
@@ -128,6 +138,11 @@ async def upload_medical_report(
     else:
         summary = f"Report '{file.filename}' processed successfully. Consult your physician for specific diagnostic review."
 
+    extracted_payload = json.dumps({
+        "summary": summary,
+        "parameters": parsed_parameters,
+    })
+
     try:
         db_report = MedicalReport(
             id=file_id,
@@ -138,6 +153,7 @@ async def upload_medical_report(
             file_size=len(content),
             upload_date=datetime.utcnow(),
             status="processed",
+            extracted_data=extracted_payload,
         )
         db.add(db_report)
         db.commit()

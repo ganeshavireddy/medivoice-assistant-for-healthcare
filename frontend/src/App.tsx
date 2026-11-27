@@ -27,8 +27,11 @@ import {
   Play,
   Square,
   Home,
+  Lock,
 } from 'lucide-react';
 import { MediVoiceDashboard } from './components/dashboard/MediVoiceDashboard';
+import { AdminDashboard } from './components/dashboard/AdminDashboard';
+import { VoiceAssistant } from './components/voice/VoiceAssistant';
 
 interface Doctor {
   id: number;
@@ -536,7 +539,7 @@ function StructuredMedicalMessage({ text, isEmergencyMsg }: { text: string; isEm
 // MAIN APPLICATION COMPONENT
 // ---------------------------------------------------------------------------
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'voice' | 'doctors' | 'reports' | 'appointments'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'admin'>('home');
   const [language, setLanguage] = useState<'en' | 'te'>('en');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
@@ -557,7 +560,10 @@ export default function App() {
   const [liveTranscript, setLiveTranscript] = useState('');
   const [micStatusMsg, setMicStatusMsg] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState<number>(0);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string>('');
   const animFrameRef = useRef<any>(null);
+  const maxAudioLevelRef = useRef<number>(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
@@ -598,12 +604,24 @@ export default function App() {
     scrollToBottom();
   }, [messages, isProcessing]);
 
-  // Health check
+  // Health check with automatic retry while connecting
+  const checkBackendHealth = async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_HOST}/health`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      setBackendOnline(res.ok);
+    } catch {
+      setBackendOnline(false);
+    }
+  };
+
   useEffect(() => {
-    fetch(`${API_HOST}/health`)
-      .then((res) => (res.ok ? setBackendOnline(true) : setBackendOnline(false)))
-      .catch(() => setBackendOnline(false));
-  }, []);
+    checkBackendHealth();
+    const interval = setInterval(checkBackendHealth, backendOnline ? 30000 : 3000);
+    return () => clearInterval(interval);
+  }, [backendOnline]);
 
   // Fetch doctors
   const fetchDoctors = async (query = '') => {
@@ -654,10 +672,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchDoctors();
-    fetchAppointments();
-    fetchReports();
-  }, []);
+    if (backendOnline) {
+      fetchDoctors();
+      fetchAppointments();
+      fetchReports();
+    }
+  }, [backendOnline]);
 
   // -------------------------------------------------------------------------
   // AUDIO PLAYBACK (TEXT-TO-SPEECH)
@@ -837,8 +857,26 @@ export default function App() {
   // -------------------------------------------------------------------------
   // VOICE INPUT RECORDING (SPEECH-TO-TEXT)
   // -------------------------------------------------------------------------
+  const refreshAudioDevices = async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const mics = devices.filter((d) => d.kind === 'audioinput');
+      setAudioDevices(mics);
+      if (!selectedMicId && mics.length > 0) {
+        setSelectedMicId(mics[0].deviceId);
+      }
+    } catch (e) {
+      console.debug('Audio device enumeration notice:', e);
+    }
+  };
+
+  useEffect(() => {
+    refreshAudioDevices();
+  }, []);
+
   // Helper to encode raw PCM Float32 audio samples into a genuine 16-bit Mono WAV file
-  const createWAVBlob = (audioBuffers: Float32Array[], sampleRate: number): Blob => {
+  const createWAVBlob = (audioBuffers: Float32Array[], sampleRate: number): { blob: Blob; rms: number } => {
     let totalLength = 0;
     for (const buf of audioBuffers) {
       totalLength += buf.length;
@@ -849,6 +887,19 @@ export default function App() {
       merged.set(buf, offset);
       offset += buf.length;
     }
+
+    // Compute RMS energy (ignoring initial 60ms mic-open transient)
+    const skip = Math.min(Math.floor(sampleRate * 0.06), Math.floor(merged.length / 4));
+    let sumSq = 0;
+    let count = 0;
+    for (let i = skip; i < merged.length; i++) {
+      sumSq += merged[i] * merged[i];
+      count++;
+    }
+    const rms = count > 0 ? Math.sqrt(sumSq / count) : 0;
+
+    // RMS normalization (immune to single-sample click spikes)
+    const gain = rms > 0.0005 && rms < 0.08 ? Math.min(20.0, 0.1 / rms) : 1.0;
 
     const buffer = new ArrayBuffer(44 + merged.length * 2);
     const view = new DataView(buffer);
@@ -875,11 +926,11 @@ export default function App() {
 
     let sampleOffset = 44;
     for (let i = 0; i < merged.length; i++, sampleOffset += 2) {
-      const s = Math.max(-1, Math.min(1, merged[i]));
+      const s = Math.max(-1, Math.min(1, merged[i] * gain));
       view.setInt16(sampleOffset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
     }
 
-    return new Blob([buffer], { type: 'audio/wav' });
+    return { blob: new Blob([buffer], { type: 'audio/wav' }), rms };
   };
 
   const silenceTimerRef = useRef<any>(null);
@@ -895,13 +946,43 @@ export default function App() {
     transcriptRef.current = '';
     recognitionErrorRef.current = false;
     audioBuffersRef.current = [];
+    maxAudioLevelRef.current = 0;
     stopAudio();
 
     try {
-      // 1. Request microphone permission
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Create & resume AudioContext synchronously inside user click gesture
+      let preAudioCtx: AudioContext | null = null;
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          preAudioCtx = new AudioCtx();
+          if (preAudioCtx.state === 'suspended') {
+            await preAudioCtx.resume();
+          }
+        }
+      } catch (e) {
+        console.warn('AudioContext init notice:', e);
+      }
+
+      // 1. Request microphone permission with echo cancellation & auto gain
+      const audioConstraints: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        ...(selectedMicId ? { deviceId: { exact: selectedMicId } } : {}),
+      };
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      } catch {
+        // Fallback to default device if selected deviceId is unavailable
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+      }
       audioStreamRef.current = stream;
       audioChunksRef.current = [];
+      refreshAudioDevices();
 
       // 2. Start MediaRecorder (native standard browser recording)
       if (typeof MediaRecorder !== 'undefined') {
@@ -928,7 +1009,7 @@ export default function App() {
       // 3. AudioContext for live volume visualizer & raw 16-bit PCM WAV capture
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        const audioCtx = new AudioCtx();
+        const audioCtx = preAudioCtx || new AudioCtx();
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
         }
@@ -955,14 +1036,21 @@ export default function App() {
           scriptProcessorRef.current = processor;
         }
 
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const dataArray = new Uint8Array(analyser.fftSize);
         const updateLevel = () => {
           if (!audioStreamRef.current) return;
-          analyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-          const avg = sum / dataArray.length;
-          setAudioLevel(Math.min(100, Math.round(avg * 3.0)));
+          analyser.getByteTimeDomainData(dataArray);
+          let sumSq = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            const norm = (dataArray[i] - 128) / 128;
+            sumSq += norm * norm;
+          }
+          const rms = Math.sqrt(sumSq / dataArray.length);
+          const level = Math.min(100, Math.round(rms * 450));
+          if (level > maxAudioLevelRef.current) {
+            maxAudioLevelRef.current = level;
+          }
+          setAudioLevel(level);
           animFrameRef.current = requestAnimationFrame(updateLevel);
         };
         updateLevel();
@@ -1089,8 +1177,11 @@ export default function App() {
 
     // Prefer genuine 16-bit PCM WAV blob if PCM frames were captured (maximally compatible with STT backends)
     let uploadFilename = 'recording.webm';
+    let capturedRms = 1;
     if (audioBuffersRef.current.length > 0) {
-      recordedBlob = createWAVBlob(audioBuffersRef.current, recordedSampleRateRef.current || 16000);
+      const wav = createWAVBlob(audioBuffersRef.current, recordedSampleRateRef.current || 16000);
+      recordedBlob = wav.blob;
+      capturedRms = wav.rms;
       uploadFilename = 'recording.wav';
     }
 
@@ -1126,8 +1217,19 @@ export default function App() {
       return;
     }
 
-    // 2. Fallback: If native speech recognition did not produce text, send recorded audio blob to backend!
-    if (recordedBlob && recordedBlob.size > 500) {
+    // 2. Fallback: If native speech recognition did not produce text, check mic signal & send audio to backend!
+    if (uploadFilename === 'recording.wav' && capturedRms < 0.0005 && maxAudioLevelRef.current < 2) {
+      setMicStatusMsg(
+        language === 'te'
+          ? 'మైక్రోఫోన్ నుండి శబ్దం వినిపించడం లేదు (0% వాల్యూమ్). దయచేసి మైక్ మ్యూట్‌లో లేదో తనిఖీ చేయండి లేదా మరో మైక్రోఫోన్‌ను ఎంచుకోండి.'
+          : 'No sound detected from your microphone (0% input). Check if your mic is muted or choose a different microphone below.'
+      );
+      audioBuffersRef.current = [];
+      audioChunksRef.current = [];
+      return;
+    }
+
+    if (recordedBlob && recordedBlob.size > 100) {
       try {
         setIsProcessing(true);
         setMicStatusMsg(
@@ -1161,7 +1263,7 @@ export default function App() {
             setMicStatusMsg(
               language === 'te'
                 ? 'వాయిస్ గుర్తించబడలేదు. దయచేసి మైక్రోఫోన్‌కు దగ్గరగా మాట్లాడండి.'
-                : 'No words detected in audio. Please speak louder into your mic or click Quick Actions.'
+                : 'No words detected in audio. Please speak louder into your mic or type your question.'
             );
           }
         } else {
@@ -1181,6 +1283,12 @@ export default function App() {
       const fallbackQuery = inputQuery.trim();
       if (fallbackQuery.length > 0) {
         handleSendMessage(fallbackQuery);
+      } else {
+        setMicStatusMsg(
+          language === 'te'
+            ? 'మైక్రోఫోన్ ఆడియో నమోదు కాలేదు. దయచేసి మైక్ అనుమతి మరియు ఇన్‌పుట్‌ను తనిఖీ చేయండి.'
+            : 'No microphone audio was captured. Please check your microphone device and speak for at least 1 second.'
+        );
       }
       audioBuffersRef.current = [];
     }
@@ -1354,21 +1462,50 @@ export default function App() {
           >
             <Calendar size={16} /> Appointments ({appointments.length})
           </button>
+          <button
+            onClick={() => setActiveTab('admin')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              fontSize: '14px',
+              fontWeight: 500,
+              backgroundColor: activeTab === 'admin' ? '#ffffff' : 'transparent',
+              color: activeTab === 'admin' ? '#0284c7' : '#64748b',
+              boxShadow: activeTab === 'admin' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              borderRadius: '8px',
+            }}
+          >
+            <Lock size={15} /> Admin Dashboard
+          </button>
         </nav>
 
         {/* Right Section: Language & Backend Status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+          <button
+            type="button"
+            onClick={checkBackendHealth}
+            title="Click to re-check backend API connection"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '13px',
+              background: 'none',
+              padding: '4px 8px',
+            }}
+          >
             <span
               style={{
                 width: '8px',
                 height: '8px',
                 borderRadius: '50%',
-                backgroundColor: backendOnline ? '#10b981' : '#ef4444',
+                backgroundColor: backendOnline ? '#10b981' : '#f59e0b',
               }}
             />
             <span style={{ color: '#64748b' }}>{backendOnline ? 'API Online' : 'API Connecting...'}</span>
-          </div>
+          </button>
 
           <div style={{ display: 'flex', backgroundColor: '#e2e8f0', borderRadius: '8px', padding: '2px' }}>
             <button
@@ -1417,486 +1554,14 @@ export default function App() {
           />
         )}
 
-        {/* TAB 1: VOICE ASSISTANT */}
+        {/* TAB 1: VOICE ASSISTANT (Rebuilt) */}
         {activeTab === 'voice' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px', height: 'calc(100vh - 130px)', minHeight: '520px' }}>
-            {/* Chat Box */}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0,
-                backgroundColor: '#ffffff',
-                borderRadius: '16px',
-                border: '1px solid #e2e8f0',
-                boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
-                overflow: 'hidden',
-              }}
-            >
-              {/* Chat Messages Area */}
-              <div
-                style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: '20px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '18px',
-                }}
-              >
-                {messages.map((m) => (
-                  <div
-                    key={m.id}
-                    style={{
-                      alignSelf: m.sender === 'user' ? 'flex-end' : 'flex-start',
-                      maxWidth: m.sender === 'user' ? '75%' : '88%',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '4px',
-                    }}
-                  >
-                    {/* Message Bubble */}
-                    <div
-                      style={{
-                        padding: m.sender === 'user' ? '12px 18px' : '16px 20px',
-                        borderRadius: m.sender === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                        backgroundColor:
-                          m.sender === 'user'
-                            ? '#0284c7'
-                            : m.isEmergency
-                            ? '#fff1f2'
-                            : '#f8fafc',
-                        color: m.sender === 'user' ? '#ffffff' : '#1e293b',
-                        border:
-                          m.sender === 'user'
-                            ? 'none'
-                            : m.isEmergency
-                            ? '1.5px solid #fecdd3'
-                            : '1px solid #e2e8f0',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                      }}
-                    >
-                      {/* User message: clean text */}
-                      {m.sender === 'user' ? (
-                        <div style={{ fontSize: '14.5px', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
-                          {m.text}
-                        </div>
-                      ) : (
-                        /* AI Message: Structured 5-Part Layout */
-                        <div>
-                          <StructuredMedicalMessage text={m.text} isEmergencyMsg={m.isEmergency} />
-
-                          {/* Citations if available */}
-                          {m.citations && m.citations.length > 0 && (
-                            <div
-                              style={{
-                                marginTop: '12px',
-                                paddingTop: '10px',
-                                borderTop: '1px dashed #cbd5e1',
-                                fontSize: '12px',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontWeight: 600,
-                                  color: '#0369a1',
-                                  marginBottom: '6px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                }}
-                              >
-                                <BookOpen size={13} /> Grounded Clinical Citations:
-                              </div>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                {m.citations.map((c, idx) => (
-                                  <span
-                                    key={idx}
-                                    style={{
-                                      backgroundColor: '#e0f2fe',
-                                      color: '#0369a1',
-                                      padding: '3px 10px',
-                                      borderRadius: '12px',
-                                      fontSize: '11px',
-                                      fontWeight: 500,
-                                      border: '1px solid #bae6fd',
-                                    }}
-                                  >
-                                    📖 {c.source || 'Medical Evidence'} (p. {c.page || '1'})
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Metadata & Audio controls */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: m.sender === 'user' ? 'flex-end' : 'space-between',
-                        gap: '8px',
-                        fontSize: '11px',
-                        color: '#94a3b8',
-                        padding: '0 6px',
-                      }}
-                    >
-                      {m.sender === 'ai' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <button
-                            onClick={() => playMessageSpeech(m.id, m.text, m.language || language)}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '5px',
-                              padding: '3px 9px',
-                              borderRadius: '12px',
-                              backgroundColor: playingMessageId === m.id ? '#fee2e2' : '#e0f2fe',
-                              color: playingMessageId === m.id ? '#b91c1c' : '#0369a1',
-                              fontWeight: 600,
-                              fontSize: '11.5px',
-                            }}
-                          >
-                            {loadingAudioId === m.id ? (
-                              <>
-                                <Loader2 size={12} className="spin" /> Generating voice...
-                              </>
-                            ) : playingMessageId === m.id ? (
-                              <>
-                                <Square size={12} /> Stop Audio
-                                <span style={{ display: 'inline-flex', gap: '2px', marginLeft: '4px' }}>
-                                  <span className="wave-bar" style={{ height: '10px' }} />
-                                  <span className="wave-bar" style={{ height: '14px' }} />
-                                  <span className="wave-bar" style={{ height: '10px' }} />
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <Volume2 size={13} /> Listen Aloud
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      )}
-                      <span>{m.time}</span>
-                    </div>
-                  </div>
-                ))}
-
-                {isProcessing && (
-                  <div
-                    style={{
-                      alignSelf: 'flex-start',
-                      padding: '12px 18px',
-                      backgroundColor: '#f1f5f9',
-                      borderRadius: '16px 16px 16px 4px',
-                      fontSize: '13px',
-                      color: '#475569',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                    }}
-                  >
-                    <Loader2 size={16} color="#0284c7" />
-                    Analyzing symptoms against evidence guidelines...
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Live Voice Recording Status Card */}
-              {isRecording && (
-                <div
-                  style={{
-                    padding: '12px 18px',
-                    backgroundColor: '#fef2f2',
-                    borderTop: '1px solid #fecdd3',
-                    borderBottom: '1px solid #fecdd3',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div
-                      style={{
-                        width: '12px',
-                        height: '12px',
-                        borderRadius: '50%',
-                        backgroundColor: '#dc2626',
-                        boxShadow: '0 0 0 4px rgba(220, 38, 38, 0.3)',
-                      }}
-                    />
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
-                          {language === 'te' ? 'వింటున్నాను... మాట్లాడండి' : 'Listening... Speak clearly'}
-                        </span>
-                        {/* Live Audio Visualizer / Volume Level */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <div style={{ width: '60px', height: '6px', backgroundColor: '#fee2e2', borderRadius: '3px', overflow: 'hidden' }}>
-                            <div style={{ width: `${Math.max(10, audioLevel)}%`, height: '100%', backgroundColor: audioLevel > 15 ? '#16a34a' : '#dc2626', transition: 'width 0.1s ease' }} />
-                          </div>
-                          <span style={{ fontSize: '10.5px', fontWeight: 600, color: audioLevel > 15 ? '#16a34a' : '#991b1b' }}>
-                            {audioLevel > 15 ? (language === 'te' ? '● స్వరం నమోదవుతోంది' : '● Voice detected') : ''}
-                          </span>
-                        </div>
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#b91c1c', fontStyle: 'italic', marginTop: '2px' }}>
-                        {liveTranscript || (language === 'te' ? 'మీ ప్రశ్నను చెప్పండి (పూర్తయ్యాక Stop & Send నొక్కండి)...' : 'Say your symptoms or question (click Stop & Send when done)...')}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={stopRecording}
-                    style={{
-                      padding: '6px 14px',
-                      backgroundColor: '#dc2626',
-                      color: '#ffffff',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      borderRadius: '8px',
-                    }}
-                  >
-                    Stop & Send
-                  </button>
-                </div>
-              )}
-
-              {/* Mic warning banner if permission blocked */}
-              {micStatusMsg && !isRecording && (
-                <div
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: '#fffbeb',
-                    borderTop: '1px solid #fde68a',
-                    fontSize: '12px',
-                    color: '#92400e',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  <AlertCircle size={14} />
-                  {micStatusMsg}
-                </div>
-              )}
-
-              {/* Quick Voice & Action Shortcuts */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '8px 18px',
-                  backgroundColor: '#f8fafc',
-                  borderTop: '1px solid #f1f5f9',
-                  overflowX: 'auto',
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    color: '#64748b',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Quick Actions:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleSendMessage('Can you schedule the appointment for general checkup')}
-                  style={{
-                    padding: '4px 10px',
-                    backgroundColor: '#e0f2fe',
-                    color: '#0369a1',
-                    border: '1px solid #bae6fd',
-                    borderRadius: '12px',
-                    fontSize: '11.5px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  📅 Schedule General Checkup
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSendMessage('Book appointment with Dr. Sarah Smith tomorrow at 10 AM')}
-                  style={{
-                    padding: '4px 10px',
-                    backgroundColor: '#f1f5f9',
-                    color: '#334155',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '12px',
-                    fontSize: '11.5px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  ❤️ Cardiology (Dr. Sarah Smith)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSendMessage('డాక్టర్ ప్రియా పటేల్‌తో రేపు ఉదయం 10 గంటలకు జనరల్ చెకప్ అపాయింట్‌మెంట్ బుక్ చేయండి')}
-                  style={{
-                    padding: '4px 10px',
-                    backgroundColor: '#fef3c7',
-                    color: '#92400e',
-                    border: '1px solid #fde68a',
-                    borderRadius: '12px',
-                    fontSize: '11.5px',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  🗣️ తెలుగు: జనరల్ చెకప్ బుక్ చేయండి
-                </button>
-              </div>
-
-              {/* Bottom Input Bar */}
-              <div
-                style={{
-                  padding: '14px 18px',
-                  backgroundColor: '#ffffff',
-                  borderTop: '1px solid #e2e8f0',
-                  display: 'flex',
-                  gap: '10px',
-                  alignItems: 'center',
-                }}
-              >
-                <button
-                  onClick={isRecording ? stopRecording : startRecording}
-                  style={{
-                    width: '46px',
-                    height: '46px',
-                    borderRadius: '50%',
-                    backgroundColor: isRecording ? '#dc2626' : '#0284c7',
-                    color: '#ffffff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: isRecording ? '0 0 0 6px rgba(220, 38, 38, 0.25)' : '0 2px 4px rgba(2, 132, 199, 0.25)',
-                    transition: 'all 0.3s ease',
-                    flexShrink: 0,
-                  }}
-                  title={isRecording ? 'Stop Recording' : 'Speak via Microphone'}
-                >
-                  {isRecording ? <MicOff size={22} /> : <Mic size={22} />}
-                </button>
-
-                <input
-                  type="text"
-                  placeholder={
-                    language === 'te'
-                      ? 'మీ ఆరోగ్య సమస్య లేదా ప్రశ్నను ఇక్కడ టైప్ చేయండి...'
-                      : 'Ask a medical question, search doctors, or type symptoms...'
-                  }
-                  value={inputQuery}
-                  onChange={(e) => setInputQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  style={{
-                    flex: 1,
-                    padding: '12px 16px',
-                    borderRadius: '10px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '14px',
-                    outline: 'none',
-                  }}
-                />
-
-                <button
-                  onClick={() => handleSendMessage()}
-                  disabled={!inputQuery.trim() || isProcessing}
-                  style={{
-                    padding: '12px 18px',
-                    backgroundColor: inputQuery.trim() && !isProcessing ? '#0284c7' : '#94a3b8',
-                    color: '#ffffff',
-                    borderRadius: '10px',
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Send size={15} /> Send
-                </button>
-              </div>
-            </div>
-
-            {/* Sidebar Prompts & Safety Info */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={{ backgroundColor: '#ffffff', padding: '18px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                <h3
-                  style={{
-                    fontSize: '14px',
-                    fontWeight: 700,
-                    color: '#0f172a',
-                    marginBottom: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                  }}
-                >
-                  <Sparkles size={16} color="#0284c7" /> Clinical Test Inquiries
-                </h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {[
-                    { en: 'I feel I have fever, can you prefer any medication?', te: 'నాకు జ్వరం ఉంది, మందులు సూచించగలరా?' },
-                    { en: 'I have burning during urination and frequency', te: 'మూత్రవిసర్జన సమయంలో మంట మరియు తరచుగా వస్తుంది' },
-                    { en: 'What are normal blood pressure ranges?', te: 'సాధారణ రక్తపోటు రీడింగులు ఏమిటి?' },
-                    { en: 'Find a Cardiologist for heart palpitation', te: 'గుండె దడ కోసం కార్డియాలజిస్ట్ కోసం వెతకండి' },
-                    { en: 'I have severe chest pain and breathlessness', te: 'నాకు తీవ్రమైన ఛాతీ నొప్పి మరియు శ్వాస ఆడటం లేదు' },
-                  ].map((p, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleSendMessage(language === 'te' ? p.te : p.en)}
-                      style={{
-                        padding: '10px 12px',
-                        backgroundColor: '#f8fafc',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '8px',
-                        textAlign: 'left',
-                        fontSize: '12.5px',
-                        color: '#334155',
-                        lineHeight: '1.4',
-                      }}
-                    >
-                      {language === 'te' ? p.te : p.en}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Healthcare Safety Notice */}
-              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px', borderRadius: '14px' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    color: '#166534',
-                    fontWeight: 600,
-                    fontSize: '13px',
-                    marginBottom: '6px',
-                  }}
-                >
-                  <ShieldCheck size={16} /> Patient Safety Protocol
-                </div>
-                <p style={{ fontSize: '12px', color: '#14532d', lineHeight: '1.5' }}>
-                  MediVoice AI conforms to grounded evidence guidelines. All responses prioritize triage safety, symptom understanding, and professional physician referral.
-                </p>
-              </div>
-            </div>
+          <div style={{ padding: "0", background: "transparent" }}>
+            <VoiceAssistant
+              initialLanguage={language}
+              userId={1}
+              onAppointmentBooked={fetchAppointments}
+            />
           </div>
         )}
 
@@ -2080,6 +1745,7 @@ export default function App() {
                               { name: 'Document Status', value: 'Indexed', unit: '', reference_range: 'Verified Format', status: 'NORMAL', color: '#10b981' },
                             ]);
                           }
+                          fetchReports();
                         } else {
                           setReportSummary('Server could not process this file format. Please upload PDF or TXT.');
                         }
@@ -2364,6 +2030,10 @@ export default function App() {
               )}
             </div>
           </div>
+        )}
+        {/* TAB 5: ADMIN-ONLY CLINICAL ANALYTICS & LINEAR REGRESSION DASHBOARD */}
+        {activeTab === 'admin' && (
+          <AdminDashboard apiHost={API_HOST} onAppointmentsChanged={fetchAppointments} />
         )}
       </main>
     </div>

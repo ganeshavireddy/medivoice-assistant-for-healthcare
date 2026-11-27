@@ -1,0 +1,5 @@
+Complete Blood Count
+Hemoglobin: 10.2 g/dL
+WBC: 13500 /mcL
+Platelet: 250000 /mcL
+HbA1c: 6.8%

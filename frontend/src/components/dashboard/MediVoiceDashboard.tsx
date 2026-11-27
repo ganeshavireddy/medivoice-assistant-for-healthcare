@@ -80,7 +80,7 @@ interface MediVoiceDashboardProps {
   appointments: Appointment[];
   doctors: Doctor[];
   reports: MedicalReportItem[];
-  onNavigateTab: (tab: 'home' | 'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments') => void;
+  onNavigateTab: (tab: 'home' | 'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'admin') => void;
   onQuickVoicePrompt: (prompt: string) => void;
   onCancelAppointment: (id: number) => Promise<void>;
   backendOnline: boolean | null;
@@ -405,7 +405,7 @@ export const MediVoiceDashboard: React.FC<MediVoiceDashboardProps> = ({
             {language === 'te' ? 'రోగి వీక్షణ' : 'Patient View'}
           </button>
           <button
-            onClick={() => setDashboardView('admin')}
+            onClick={() => onNavigateTab('admin')}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -416,25 +416,24 @@ export const MediVoiceDashboard: React.FC<MediVoiceDashboardProps> = ({
               fontWeight: 600,
               border: 'none',
               cursor: 'pointer',
-              backgroundColor: dashboardView === 'admin' ? '#0284c7' : 'transparent',
-              color: dashboardView === 'admin' ? '#ffffff' : '#64748b',
-              boxShadow: dashboardView === 'admin' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+              backgroundColor: 'transparent',
+              color: '#64748b',
               transition: 'all 0.15s ease',
             }}
           >
             <Shield size={14} />
-            {language === 'te' ? 'అడ్మిన్ డ్యాష్‌బోర్డ్' : 'Admin Console'}
+            {language === 'te' ? 'అడ్మిన్ డ్యాష్‌బోర్డ్' : 'Admin Dashboard'}
             <span
               style={{
                 fontSize: '10px',
-                backgroundColor: dashboardView === 'admin' ? 'rgba(255,255,255,0.25)' : '#e0f2fe',
-                color: dashboardView === 'admin' ? '#ffffff' : '#0284c7',
+                backgroundColor: '#e0f2fe',
+                color: '#0284c7',
                 padding: '1px 6px',
                 borderRadius: '4px',
                 fontWeight: 700,
               }}
             >
-              ADMIN
+              ADMIN ONLY
             </span>
           </button>
         </div>

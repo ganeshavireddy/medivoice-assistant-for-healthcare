@@ -92,3 +92,100 @@ def test_auth_and_doctor_flow(client):
     assert audio_file_res.headers.get("content-type") == "audio/mpeg"
     assert len(audio_file_res.content) > 0
 
+
+def test_admin_only_dashboard_and_regression(client):
+    # Unauthenticated access must be blocked
+    unauth_res = client.get("/api/v1/admin/analytics")
+    assert unauth_res.status_code == 401
+
+    # Patient token must be rejected with 403
+    from security import create_access_token
+    patient_token = create_access_token(data={"sub": "regular_patient", "role": "patient"})
+    patient_res = client.get(
+        "/api/v1/admin/analytics",
+        headers={"Authorization": f"Bearer {patient_token}"},
+    )
+    assert patient_res.status_code == 403
+
+    # Wrong passkey must fail
+    bad_login = client.post("/api/v1/admin/login", json={"passkey": "wrong-passkey"})
+    assert bad_login.status_code == 401
+
+    # Valid admin login returns admin JWT
+    login_res = client.post("/api/v1/admin/login", json={"passkey": "admin123"})
+    assert login_res.status_code == 200
+    admin_token = login_res.json()["access_token"]
+
+    # Upload a sample report with abnormal markers so report analysis & regression are tested
+    sample_report = (
+        "Complete Blood Count\n"
+        "Hemoglobin: 10.2 g/dL\n"
+        "WBC: 13500 /mcL\n"
+        "Platelet: 250000 /mcL\n"
+        "HbA1c: 6.8%\n"
+    )
+    up_res = client.post(
+        "/api/v1/reports/upload",
+        files={"file": ("cbc_test_report.txt", sample_report.encode("utf-8"), "text/plain")},
+    )
+    assert up_res.status_code == 200
+    uploaded_id = up_res.json()["id"]
+    assert len(up_res.json()["parameters"]) >= 3
+
+    try:
+        # Admin analytics succeeds and includes appointments, reports, and OLS linear regression
+        analytics_res = client.get(
+            "/api/v1/admin/analytics",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert analytics_res.status_code == 200
+        data = analytics_res.json()
+        assert "summary" in data
+        assert "appointments" in data
+        assert "reports" in data
+        assert "biomarker_chart" in data
+        assert "linear_regression" in data
+        assert "appointments" in data["linear_regression"]
+        assert "reports_abnormality" in data["linear_regression"]
+        assert "r_squared" in data["linear_regression"]["appointments"]
+        assert "equation" in data["linear_regression"]["reports_abnormality"]
+    finally:
+        from database import SessionLocal, MedicalReport
+        with SessionLocal() as db:
+            db.query(MedicalReport).filter(MedicalReport.id == uploaded_id).delete()
+            db.commit()
+
+
+def test_voice_transcribe_48khz_wav(client):
+    import io, wave, av
+    speak_res = client.post(
+        "/api/v1/voice/speak",
+        json={"text": "I have fever and headache", "language": "en"},
+    )
+    assert speak_res.status_code == 200
+    mp3_bytes = client.get(speak_res.json()["audio_url"]).content
+
+    container = av.open(io.BytesIO(mp3_bytes))
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
+    pcm48 = b"".join(
+        rf.to_ndarray().tobytes()
+        for f in container.decode(audio=0)
+        for rf in resampler.resample(f)
+    )
+    wav_buf = io.BytesIO()
+    with wave.open(wav_buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(48000)
+        wf.writeframes(pcm48)
+
+    tr_res = client.post(
+        "/api/v1/voice/transcribe",
+        files={"file": ("recording.wav", wav_buf.getvalue(), "audio/wav")},
+        data={"language": "en"},
+    )
+    assert tr_res.status_code == 200
+    text = tr_res.json()["transcription"].lower()
+    assert "fever" in text or "headache" in text
+
+

@@ -1,331 +1,235 @@
 """
-MediVoice AI - Voice API Endpoints
+MediVoice AI - Modular Voice API Endpoints
 
-Handles speech-to-text, text-to-speech, and voice conversation flow with Edge-TTS and Whisper.
+Provides clean, asynchronous endpoints for speech-to-text (STT),
+text-to-speech (TTS), live audio streaming, and conversational medical triage.
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, WebSocket, BackgroundTasks, Response, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
-from schemas import TranscribeRequest, TranscribeResponse, SpeakRequest, SpeakResponse, VoiceChatRequest, VoiceChatResponse
-from config import settings, API_V1_PREFIX
-from ai.medical_agent import medical_agent
 import os
-import uuid
-import tempfile
-import asyncio
-import re
 import io
+import base64
 import logging
+from typing import Optional
+
+from fastapi import (
+    APIRouter,
+    UploadFile,
+    File,
+    Form,
+    Body,
+    Query,
+    HTTPException,
+    Response,
+    status,
+)
+from fastapi.responses import FileResponse
+
+from config import API_V1_PREFIX
+from schemas.voice import (
+    TranscribeRequest,
+    TranscribeResponse,
+    SynthesizeRequest,
+    SynthesizeResponse,
+    VoiceChatRequest,
+    VoiceChatResponse,
+)
+from services.voice import (
+    audio_processor,
+    transcription_service,
+    speech_service,
+    voice_session_manager,
+)
+from ai.medical_agent import medical_agent
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix=f"{API_V1_PREFIX}/voice", tags=["Voice"])
-
-# Directory for storing generated audio clips
-AUDIO_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "audio_cache")
-os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
-
-# Lazy-loaded whisper model
-_whisper_model = None
-
-
-def get_whisper_model():
-    global _whisper_model
-    if _whisper_model is None:
-        try:
-            from faster_whisper import WhisperModel
-            # 'tiny' or 'base' are fast on CPU
-            _whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        except Exception as e:
-            logger.warning(f"WhisperModel initialization failed: {e}")
-            _whisper_model = False
-    return _whisper_model if _whisper_model is not False else None
-
-
-def clean_text_for_speech(text: str) -> str:
-    """Clean markdown, bullets, emojis, and symbols so TTS sounds natural and clear."""
-    if not text:
-        return ""
-    
-    # Remove markdown headers like '### 1. Understanding your symptoms'
-    cleaned = re.sub(r"#{1,6}\s*(\d+\.?\s*)?", r"\1", text)
-    # Remove markdown bold/italic
-    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
-    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
-    # Remove bullet markers
-    cleaned = re.sub(r"^[•\-\*]\s*", "", cleaned, flags=re.MULTILINE)
-    # Remove emojis and special status icons
-    cleaned = re.sub(r"[🚨⚠️ℹ️•—–✓🩺❤️]", " ", cleaned)
-    # Remove URLs
-    cleaned = re.sub(r"http\S+", "", cleaned)
-    # Replace multiple newlines or spaces with single punctuation/space
-    cleaned = re.sub(r"\n+", ". ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned
-
-
-def get_voice_for_language(language: str) -> str:
-    """Select the best Edge-TTS voice based on language code."""
-    lang_lower = (language or "en").lower()
-    if "te" in lang_lower:
-        return "te-IN-ShrutiNeural"
-    elif "hi" in lang_lower:
-        return "hi-IN-SwaraNeural"
-    else:
-        return "en-US-JennyNeural"
-
-
-async def generate_audio_bytes(text: str, language: str = "en") -> bytes:
-    """Generate MP3 audio bytes using edge_tts."""
-    import edge_tts
-    
-    clean_text = clean_text_for_speech(text)
-    if not clean_text:
-        clean_text = "I have received your request."
-    
-    # Cap text length for voice synthesis while keeping at least a meaningful sentence
-    if len(clean_text) > 750:
-        truncated = clean_text[:750]
-        last_period = truncated.rfind(".")
-        if last_period > 200:
-            clean_text = truncated[: last_period + 1]
-        else:
-            clean_text = truncated.rsplit(" ", 1)[0] + "."
-        
-    voice = get_voice_for_language(language)
-    communicate = edge_tts.Communicate(clean_text, voice)
-    
-    audio_stream = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            audio_stream.write(chunk["data"])
-            
-    audio_stream.seek(0)
-    return audio_stream.read()
-
-
-def decode_audio_to_pcm(content: bytes) -> bytes:
-    """
-    Decodes any audio container (WebM, OGG, WAV, MP4, AAC) into standard
-    16kHz 16-bit Mono PCM bytes using PyAV.
-    """
-    try:
-        import av
-        inp = io.BytesIO(content)
-        container = av.open(inp)
-        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
-        pcm_chunks = []
-        for frame in container.decode(audio=0):
-            resampled_frames = resampler.resample(frame)
-            for r_frame in resampled_frames:
-                pcm_chunks.append(r_frame.to_ndarray().tobytes())
-        return b"".join(pcm_chunks)
-    except Exception as e:
-        logger.warning(f"Audio decoding notice: {e}")
-        return b""
-
-
-def _pcm_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 16000) -> bytes:
-    """Wrap raw 16-bit mono PCM bytes in a standard RIFF/WAV container."""
-    import wave
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm_bytes)
-    return buf.getvalue()
-
-
-def _transcribe_with_whisper(audio_bytes: bytes, language: str = "en") -> str:
-    """Offline fallback transcription using Faster-Whisper."""
-    model = get_whisper_model()
-    if not model or not audio_bytes:
-        return ""
-    tmp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
-        lang_code = "te" if (language or "").lower().startswith("te") else (
-            "hi" if (language or "").lower().startswith("hi") else "en"
-        )
-        segments, _info = model.transcribe(tmp_path, language=lang_code, beam_size=3, vad_filter=True)
-        return " ".join(seg.text.strip() for seg in segments if seg.text).strip()
-    except Exception as e:
-        logger.debug(f"Whisper transcription notice: {e}")
-        return ""
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+router = APIRouter(prefix=f"{API_V1_PREFIX}/voice", tags=["Voice Assistant"])
 
 
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe_audio(
-    file: UploadFile = File(...),
-    language: str = Form("en"),
+    file: Optional[UploadFile] = File(None),
+    language: Optional[str] = Form("en"),
+    body: Optional[TranscribeRequest] = Body(None),
 ):
     """
-    Transcribes spoken audio into text. Supports WAV, WebM, OGG, MP4, AAC
-    via PyAV/PCM decoding, Google Speech Recognition, and Faster-Whisper offline fallback.
+    Transcribe spoken audio from a multipart file or JSON base64 string.
+    Supports WebM, OGG, WAV, MP4, and AAC. Automatically detects English and Telugu.
     """
-    content = await file.read()
-    transcription = ""
-    lang_code = (language or "en").lower()
-    detected_lang = "te" if lang_code.startswith("te") else ("hi" if lang_code.startswith("hi") else "en")
+    audio_bytes: bytes = b""
+    filename: str = ""
+    target_lang = language or "en"
 
-    lang_locale_map = {"en": "en-US", "te": "te-IN", "hi": "hi-IN"}
-    primary_lang = lang_locale_map.get(detected_lang, "en-US")
-    secondary_lang = "en-US" if detected_lang != "en" else "te-IN"
-
-    # 1. Decode to 16kHz mono PCM if possible (handles WebM, OGG, MP4, WAV)
-    pcm_bytes = decode_audio_to_pcm(content)
-    if pcm_bytes:
+    # Handle multipart file upload
+    if file is not None:
+        audio_bytes = await file.read()
+        filename = file.filename or "recording.webm"
+    # Handle JSON base64 payload
+    elif body is not None and body.audio_base64:
+        target_lang = body.language or target_lang
         try:
-            import speech_recognition as sr
-            r = sr.Recognizer()
-            audio_data = sr.AudioData(pcm_bytes, 16000, 2)
-            try:
-                transcription = r.recognize_google(audio_data, language=primary_lang)
-            except Exception:
-                try:
-                    transcription = r.recognize_google(audio_data, language=secondary_lang)
-                    detected_lang = "en" if secondary_lang == "en-US" else "te"
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.debug(f"PCM transcription error: {e}")
+            b64_data = body.audio_base64
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
+            audio_bytes = base64.b64decode(b64_data)
+            filename = "upload.wav"
+        except Exception as b64_err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid base64 audio payload: {b64_err}",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No audio payload provided. Submit a multipart 'file' or JSON 'audio_base64'.",
+        )
 
-    # 2. Fallback: Try reading raw file directly via sr.AudioFile (works for standard WAV/AIFF/FLAC)
-    if not transcription and content:
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-            import speech_recognition as sr
-            r = sr.Recognizer()
-            with sr.AudioFile(tmp_path) as source:
-                audio_data = r.record(source)
-                try:
-                    transcription = r.recognize_google(audio_data, language=primary_lang)
-                except Exception:
-                    transcription = r.recognize_google(audio_data, language=secondary_lang)
-                    detected_lang = "en" if secondary_lang == "en-US" else "te"
-        except Exception as e:
-            logger.debug(f"Temporary file AudioFile transcription notice: {e}")
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+    result = await transcription_service.transcribe(
+        audio_content=audio_bytes,
+        language=target_lang,
+        filename=filename,
+    )
 
-    # 3. Offline Fallback: Faster-Whisper (works even if Google Speech API is unreachable)
-    if not transcription and content:
-        whisper_input = _pcm_to_wav_bytes(pcm_bytes, 16000) if pcm_bytes else content
-        transcription = _transcribe_with_whisper(whisper_input, detected_lang)
-
-    logger.info(f"Transcribed audio: '{transcription}' (lang={detected_lang})")
-    return {"transcription": transcription, "language": detected_lang}
+    return TranscribeResponse(
+        transcription=result.transcription,
+        detected_language=result.detected_language,
+        processing_time=result.processing_time,
+        success=result.success,
+        error=result.error,
+    )
 
 
-@router.post("/speak")
-async def speak_text(request: dict):
+@router.post("/synthesize", response_model=SynthesizeResponse)
+async def synthesize_speech(payload: SynthesizeRequest):
     """
-    Generate speech using Edge-TTS.
-    Accepts JSON with 'text' and optional 'language'.
-    Returns cached audio file URL and direct playback metadata.
+    Synthesize clinical advice into high-quality spoken audio using Edge-TTS.
+    Returns relative audio URL and metadata.
     """
-    text = request.get("text", "")
-    language = request.get("language", "en")
-    
-    try:
-        audio_bytes = await generate_audio_bytes(text, language)
-        filename = f"speech_{uuid.uuid4().hex[:12]}.mp3"
-        filepath = os.path.join(AUDIO_CACHE_DIR, filename)
-        
-        with open(filepath, "wb") as f:
-            f.write(audio_bytes)
-            
-        return {
-            "message": "Speech generated successfully",
-            "audio_url": f"{API_V1_PREFIX}/voice/audio/{filename}",
-            "text": text,
-            "language": language,
-            "bytes_length": len(audio_bytes)
-        }
-    except Exception as e:
-        logger.error(f"TTS generation error: {e}")
-        return {
-            "message": f"TTS generation error: {str(e)}",
-            "audio_url": None,
-            "text": text,
-            "language": language,
-        }
+    result = await speech_service.synthesize(
+        text=payload.text,
+        language=payload.language or "en",
+        cache=True,
+    )
+
+    return SynthesizeResponse(
+        audio_url=result.audio_url,
+        audio_base64=None,
+        language=result.language,
+        duration_est=result.duration_est,
+        success=result.success,
+        error=result.error,
+    )
 
 
 @router.get("/stream_speech")
-@router.post("/stream_speech")
 async def stream_speech(
-    text: str = Query(..., description="Text to speak"),
-    language: str = Query("en", description="Language code (en or te)")
+    text: str = Query(..., description="Text to speak aloud"),
+    language: str = Query("en", description="Target language ('en' or 'te')"),
 ):
     """
-    Stream MP3 audio directly for instant HTML5 <audio> playback.
+    Stream MP3 audio directly for instant HTML5 <audio> tag playback.
     """
-    try:
-        audio_bytes = await generate_audio_bytes(text, language)
-        return Response(content=audio_bytes, media_type="audio/mpeg")
-    except Exception as e:
-        logger.error(f"Stream speech error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    result = await speech_service.synthesize(text=text, language=language, cache=True)
+    if not result.success or not result.audio_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result.error or "Failed to synthesize speech audio.",
+        )
+
+    return Response(
+        content=result.audio_bytes,
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": "inline; filename=speech.mp3"},
+    )
 
 
 @router.get("/audio/{filename}")
-async def get_audio_file(filename: str):
-    """Serve cached audio file."""
-    filepath = os.path.join(AUDIO_CACHE_DIR, filename)
+async def get_cached_audio(filename: str):
+    """Serve cached TTS audio file."""
+    # Sanitize filename to prevent directory traversal
+    safe_filename = os.path.basename(filename)
+    from services.voice.speech_service import AUDIO_CACHE_DIR
+    filepath = os.path.join(AUDIO_CACHE_DIR, safe_filename)
+
     if os.path.exists(filepath):
         return FileResponse(filepath, media_type="audio/mpeg")
-    raise HTTPException(status_code=404, detail="Audio file not found")
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Requested audio file not found.",
+    )
 
 
-@router.post("/chat")
-async def voice_chat(
-    request: dict,
-    background_tasks: BackgroundTasks,
-):
-    """Process voice conversation with Master Medical Agent."""
-    user_message = request.get("message", "")
-    language = request.get("language", "en")
-    user_id = int(request.get("user_id", 1))
+@router.post("/chat", response_model=VoiceChatResponse)
+async def voice_chat(request: VoiceChatRequest):
+    """
+    Integrated conversational endpoint:
+    Processes transcribed voice input with MasterMedicalAgent,
+    handles emergency triage, appointment booking, and session memory.
+    """
+    user_id = request.user_id or 1
+    user_text = request.message.strip()
+    language = request.language or "en"
+
+    # Record patient query in session memory
+    voice_session_manager.record_turn(
+        user_id=user_id,
+        role="user",
+        text=user_text,
+        language=language,
+    )
 
     try:
-        result = await medical_agent.process_user_input(
+        agent_res = await medical_agent.process_user_input(
             user_id=user_id,
-            user_input=user_message,
+            user_input=user_text,
             language=language,
         )
-        return {
-            "response_text": result.get("response_text", f"Processed: {user_message}"),
-            "language": language,
-            "requires_tts": True,
-            "citations": result.get("citations", []),
-            "mcp_result": result.get("mcp_result"),
-            "patient_state": result.get("patient_state"),
-            "is_emergency": result.get("is_emergency", False),
-            "booked_appointment": result.get("booked_appointment"),
-        }
+
+        response_text = agent_res.get("response_text", "")
+        is_emergency = agent_res.get("is_emergency", False)
+        booked_appt = agent_res.get("booked_appointment")
+        citations = agent_res.get("citations", [])
+
+        # Record assistant reply in session memory
+        voice_session_manager.record_turn(
+            user_id=user_id,
+            role="assistant",
+            text=response_text,
+            language=language,
+            is_emergency=is_emergency,
+        )
+
+        return VoiceChatResponse(
+            response_text=response_text,
+            language=language,
+            requires_tts=True,
+            citations=citations,
+            is_emergency=is_emergency,
+            booked_appointment=booked_appt,
+            audio_url=None,
+            error=None,
+        )
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "response_text": "I apologize, but I am having trouble processing that medical request. Please consult a licensed physician or emergency services if urgent.",
-            "language": language,
-            "requires_tts": True,
-            "error": str(e),
-        }
+        logger.error(f"Medical agent error: {e}", exc_info=True)
+        fallback_msg = (
+            "I apologize, but I encountered an issue processing your medical request. "
+            "Please consult a healthcare professional, or call 112 / 108 in an emergency."
+        )
+        return VoiceChatResponse(
+            response_text=fallback_msg,
+            language=language,
+            requires_tts=True,
+            citations=[],
+            is_emergency=False,
+            booked_appointment=None,
+            audio_url=None,
+            error=str(e),
+        )
+
+
+@router.post("/session/clear")
+async def clear_voice_session(user_id: int = Query(1, description="Patient User ID")):
+    """Clear patient conversation state and voice memory."""
+    voice_session_manager.clear_session(user_id)
+    return {"status": "success", "message": f"Voice session cleared for patient #{user_id}."}
