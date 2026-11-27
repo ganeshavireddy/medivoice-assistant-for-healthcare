@@ -83,9 +83,14 @@ async def generate_audio_bytes(text: str, language: str = "en") -> bytes:
     if not clean_text:
         clean_text = "I have received your request."
     
-    # Cap text length for voice synthesis so it remains responsive (first 600 chars is ideal)
+    # Cap text length for voice synthesis while keeping at least a meaningful sentence
     if len(clean_text) > 750:
-        clean_text = clean_text[:750].rsplit(".", 1)[0] + "."
+        truncated = clean_text[:750]
+        last_period = truncated.rfind(".")
+        if last_period > 200:
+            clean_text = truncated[: last_period + 1]
+        else:
+            clean_text = truncated.rsplit(" ", 1)[0] + "."
         
     voice = get_voice_for_language(language)
     communicate = edge_tts.Communicate(clean_text, voice)
@@ -120,23 +125,63 @@ def decode_audio_to_pcm(content: bytes) -> bytes:
         return b""
 
 
+def _pcm_to_wav_bytes(pcm_bytes: bytes, sample_rate: int = 16000) -> bytes:
+    """Wrap raw 16-bit mono PCM bytes in a standard RIFF/WAV container."""
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm_bytes)
+    return buf.getvalue()
+
+
+def _transcribe_with_whisper(audio_bytes: bytes, language: str = "en") -> str:
+    """Offline fallback transcription using Faster-Whisper."""
+    model = get_whisper_model()
+    if not model or not audio_bytes:
+        return ""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+        lang_code = "te" if (language or "").lower().startswith("te") else (
+            "hi" if (language or "").lower().startswith("hi") else "en"
+        )
+        segments, _info = model.transcribe(tmp_path, language=lang_code, beam_size=3, vad_filter=True)
+        return " ".join(seg.text.strip() for seg in segments if seg.text).strip()
+    except Exception as e:
+        logger.debug(f"Whisper transcription notice: {e}")
+        return ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe_audio(
     file: UploadFile = File(...),
     language: str = Form("en"),
 ):
     """
-    Transcribes spoken audio into text. Supports any incoming audio format
-    (WebM, OGG, WAV) using PyAV and Google Speech Recognition API.
+    Transcribes spoken audio into text. Supports WAV, WebM, OGG, MP4, AAC
+    via PyAV/PCM decoding, Google Speech Recognition, and Faster-Whisper offline fallback.
     """
     content = await file.read()
     transcription = ""
-    detected_lang = language or "en"
-    
-    primary_lang = "te-IN" if language == "te" else "en-US"
-    secondary_lang = "en-US" if language == "te" else "te-IN"
+    lang_code = (language or "en").lower()
+    detected_lang = "te" if lang_code.startswith("te") else ("hi" if lang_code.startswith("hi") else "en")
 
-    # 1. Try PyAV PCM decoding + SpeechRecognition (handles WebM, OGG, WAV seamlessly)
+    lang_locale_map = {"en": "en-US", "te": "te-IN", "hi": "hi-IN"}
+    primary_lang = lang_locale_map.get(detected_lang, "en-US")
+    secondary_lang = "en-US" if detected_lang != "en" else "te-IN"
+
+    # 1. Decode to 16kHz mono PCM if possible (handles WebM, OGG, MP4, WAV)
     pcm_bytes = decode_audio_to_pcm(content)
     if pcm_bytes:
         try:
@@ -145,39 +190,44 @@ async def transcribe_audio(
             audio_data = sr.AudioData(pcm_bytes, 16000, 2)
             try:
                 transcription = r.recognize_google(audio_data, language=primary_lang)
-                detected_lang = language
             except Exception:
                 try:
                     transcription = r.recognize_google(audio_data, language=secondary_lang)
-                    detected_lang = "te" if secondary_lang == "te-IN" else "en"
+                    detected_lang = "en" if secondary_lang == "en-US" else "te"
                 except Exception:
                     pass
         except Exception as e:
             logger.debug(f"PCM transcription error: {e}")
 
-    # 2. Fallback: Write to temporary file and inspect via sr.AudioFile
-    if not transcription:
+    # 2. Fallback: Try reading raw file directly via sr.AudioFile (works for standard WAV/AIFF/FLAC)
+    if not transcription and content:
+        tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name
-            try:
-                import speech_recognition as sr
-                r = sr.Recognizer()
-                with sr.AudioFile(tmp_path) as source:
-                    audio_data = r.record(source)
-                    try:
-                        transcription = r.recognize_google(audio_data, language=primary_lang)
-                    except Exception:
-                        transcription = r.recognize_google(audio_data, language=secondary_lang)
-            finally:
-                if os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except Exception:
-                        pass
+            import speech_recognition as sr
+            r = sr.Recognizer()
+            with sr.AudioFile(tmp_path) as source:
+                audio_data = r.record(source)
+                try:
+                    transcription = r.recognize_google(audio_data, language=primary_lang)
+                except Exception:
+                    transcription = r.recognize_google(audio_data, language=secondary_lang)
+                    detected_lang = "en" if secondary_lang == "en-US" else "te"
         except Exception as e:
             logger.debug(f"Temporary file AudioFile transcription notice: {e}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    # 3. Offline Fallback: Faster-Whisper (works even if Google Speech API is unreachable)
+    if not transcription and content:
+        whisper_input = _pcm_to_wav_bytes(pcm_bytes, 16000) if pcm_bytes else content
+        transcription = _transcribe_with_whisper(whisper_input, detected_lang)
 
     logger.info(f"Transcribed audio: '{transcription}' (lang={detected_lang})")
     return {"transcription": transcription, "language": detected_lang}

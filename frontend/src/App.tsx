@@ -26,16 +26,8 @@ import {
   AlertCircle,
   Play,
   Square,
-  BarChart2,
-  Lock,
-  Unlock,
-  KeyRound,
-  LogOut,
-  ShieldAlert,
-  LayoutDashboard,
   Home,
 } from 'lucide-react';
-import { EvaluationDashboard } from './pages/EvaluationDashboard';
 import { MediVoiceDashboard } from './components/dashboard/MediVoiceDashboard';
 
 interface Doctor {
@@ -544,7 +536,7 @@ function StructuredMedicalMessage({ text, isEmergencyMsg }: { text: string; isEm
 // MAIN APPLICATION COMPONENT
 // ---------------------------------------------------------------------------
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'voice' | 'doctors' | 'reports' | 'appointments'>('home');
   const [language, setLanguage] = useState<'en' | 'te'>('en');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
@@ -569,6 +561,7 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
+  const recognitionErrorRef = useRef<boolean>(false);
   const transcriptRef = useRef<string>('');
 
   // Audio Playback (TTS) State
@@ -594,56 +587,6 @@ export default function App() {
   const [reportSummary, setReportSummary] = useState<string | null>(null);
   const [reportParameters, setReportParameters] = useState<any[]>([]);
   const [uploadingReport, setUploadingReport] = useState(false);
-
-  // Admin Authentication State for AI Evaluation Dashboard
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('medivoice_admin_auth') === 'true';
-  });
-  const [adminPasskey, setAdminPasskey] = useState('');
-  const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
-  const [isVerifyingAdmin, setIsVerifyingAdmin] = useState(false);
-
-  const handleAdminLogin = async (overrideKey?: string) => {
-    const key = (overrideKey || adminPasskey).trim();
-    if (!key) {
-      setAdminAuthError('Please enter an administrator passkey.');
-      return;
-    }
-    setIsVerifyingAdmin(true);
-    setAdminAuthError(null);
-    try {
-      const res = await fetch(`${API_BASE}/evaluation/verify-admin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passkey: key }),
-      });
-      if (res.ok) {
-        setIsAdminAuthenticated(true);
-        sessionStorage.setItem('medivoice_admin_auth', 'true');
-        setAdminPasskey('');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setAdminAuthError(data.detail || 'Invalid administrator passkey. Please check your credentials.');
-      }
-    } catch {
-      // Local fallback
-      if (['admin123', 'medivoice2026', 'admin'].includes(key.toLowerCase())) {
-        setIsAdminAuthenticated(true);
-        sessionStorage.setItem('medivoice_admin_auth', 'true');
-        setAdminPasskey('');
-      } else {
-        setAdminAuthError('Invalid administrator passkey. Please check your credentials.');
-      }
-    } finally {
-      setIsVerifyingAdmin(false);
-    }
-  };
-
-  const handleAdminLogout = () => {
-    setIsAdminAuthenticated(false);
-    sessionStorage.removeItem('medivoice_admin_auth');
-    setActiveTab('voice');
-  };
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -814,7 +757,14 @@ export default function App() {
       setPlayingMessageId(null);
     };
 
-    window.speechSynthesis.speak(utterance);
+    // Short delay after cancel() prevents Chromium from silently dropping the utterance
+    setTimeout(() => {
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        setPlayingMessageId(null);
+      }
+    }, 50);
   };
 
   // -------------------------------------------------------------------------
@@ -875,7 +825,7 @@ export default function App() {
       const fallbackMsg: ChatMessage = {
         id: String(Date.now() + 1),
         sender: 'ai',
-        text: 'Thank you for reaching out. For diagnostic advice, please consult our licensed physicians or use the Doctor Directory to book a consultation.',
+        text: 'Unable to reach the MediVoice backend API right now. Please verify the backend server is running and try again.',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setMessages((prev) => [...prev, fallbackMsg]);
@@ -936,11 +886,15 @@ export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const audioBuffersRef = useRef<Float32Array[]>([]);
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const recordedSampleRateRef = useRef<number>(16000);
 
   const startRecording = async () => {
     setMicStatusMsg(null);
     setLiveTranscript('');
     transcriptRef.current = '';
+    recognitionErrorRef.current = false;
+    audioBuffersRef.current = [];
     stopAudio();
 
     try {
@@ -950,8 +904,8 @@ export default function App() {
       audioChunksRef.current = [];
 
       // 2. Start MediaRecorder (native standard browser recording)
-      let mimeType = 'audio/webm';
       if (typeof MediaRecorder !== 'undefined') {
+        let mimeType = '';
         if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
           mimeType = 'audio/webm;codecs=opus';
         } else if (MediaRecorder.isTypeSupported('audio/webm')) {
@@ -961,7 +915,7 @@ export default function App() {
         } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
           mimeType = 'audio/ogg';
         }
-        const recorder = new MediaRecorder(stream, { mimeType });
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
         mediaRecorderRef.current = recorder;
         recorder.ondataavailable = (e) => {
           if (e.data && e.data.size > 0) {
@@ -971,7 +925,7 @@ export default function App() {
         recorder.start(100); // Collect slice every 100ms
       }
 
-      // 3. AudioContext for live volume visualizer
+      // 3. AudioContext for live volume visualizer & raw 16-bit PCM WAV capture
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         const audioCtx = new AudioCtx();
@@ -979,10 +933,27 @@ export default function App() {
           await audioCtx.resume();
         }
         audioContextRef.current = audioCtx;
+        recordedSampleRateRef.current = audioCtx.sampleRate || 16000;
+
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
+
+        // Capture PCM samples cleanly into audioBuffersRef for reliable WAV upload
+        if (typeof audioCtx.createScriptProcessor === 'function') {
+          const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          const silentGain = audioCtx.createGain();
+          silentGain.gain.value = 0;
+          processor.onaudioprocess = (event: AudioProcessingEvent) => {
+            const channelData = event.inputBuffer.getChannelData(0);
+            audioBuffersRef.current.push(new Float32Array(channelData));
+          };
+          source.connect(processor);
+          processor.connect(silentGain);
+          silentGain.connect(audioCtx.destination);
+          scriptProcessorRef.current = processor;
+        }
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         const updateLevel = () => {
@@ -1037,6 +1008,9 @@ export default function App() {
 
           recognition.onerror = (e: any) => {
             console.warn('Native speech recognition notice:', e.error);
+            if (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'network' || e.error === 'audio-capture') {
+              recognitionErrorRef.current = true;
+            }
             if (e.error === 'not-allowed') {
               setMicStatusMsg(
                 language === 'te'
@@ -1047,8 +1021,8 @@ export default function App() {
           };
 
           recognition.onend = () => {
-            // Keep listening if recording is still active
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            // Keep listening only if recording is active and no fatal SpeechRecognition error occurred
+            if (!recognitionErrorRef.current && mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
               try {
                 recognition.start();
               } catch (e) {}
@@ -1080,8 +1054,14 @@ export default function App() {
 
     if (recognitionRef.current) {
       try {
+        recognitionErrorRef.current = true; // Prevent onend from restarting during stop
         recognitionRef.current.stop();
       } catch (e) {}
+    }
+
+    // Give Web Speech API a brief moment to emit any final buffered transcript
+    if (!transcriptRef.current.trim() && recognitionRef.current) {
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     // Stop MediaRecorder and await final audio blob
@@ -1107,6 +1087,20 @@ export default function App() {
       recordedBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     }
 
+    // Prefer genuine 16-bit PCM WAV blob if PCM frames were captured (maximally compatible with STT backends)
+    let uploadFilename = 'recording.webm';
+    if (audioBuffersRef.current.length > 0) {
+      recordedBlob = createWAVBlob(audioBuffersRef.current, recordedSampleRateRef.current || 16000);
+      uploadFilename = 'recording.wav';
+    }
+
+    if (scriptProcessorRef.current) {
+      try {
+        scriptProcessorRef.current.disconnect();
+      } catch (e) {}
+      scriptProcessorRef.current = null;
+    }
+
     if (audioStreamRef.current) {
       audioStreamRef.current.getTracks().forEach((track) => track.stop());
       audioStreamRef.current = null;
@@ -1128,6 +1122,7 @@ export default function App() {
       transcriptRef.current = '';
       setLiveTranscript('');
       setMicStatusMsg(null);
+      audioBuffersRef.current = [];
       return;
     }
 
@@ -1142,7 +1137,7 @@ export default function App() {
         );
 
         const formData = new FormData();
-        formData.append('file', recordedBlob, 'recording.webm');
+        formData.append('file', recordedBlob, uploadFilename);
         formData.append('language', language);
 
         const res = await fetch(`${API_BASE}/voice/transcribe`, {
@@ -1160,6 +1155,7 @@ export default function App() {
             setLiveTranscript('');
             transcriptRef.current = '';
             audioChunksRef.current = [];
+            audioBuffersRef.current = [];
             return;
           } else {
             setMicStatusMsg(
@@ -1179,12 +1175,14 @@ export default function App() {
         setLiveTranscript('');
         transcriptRef.current = '';
         audioChunksRef.current = [];
+        audioBuffersRef.current = [];
       }
     } else {
       const fallbackQuery = inputQuery.trim();
       if (fallbackQuery.length > 0) {
         handleSendMessage(fallbackQuery);
       }
+      audioBuffersRef.current = [];
     }
   };
 
@@ -1356,39 +1354,6 @@ export default function App() {
           >
             <Calendar size={16} /> Appointments ({appointments.length})
           </button>
-          <button
-            onClick={() => setActiveTab('evaluation')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '8px 16px',
-              fontSize: '14px',
-              fontWeight: 500,
-              backgroundColor: activeTab === 'evaluation' ? '#ffffff' : 'transparent',
-              color: activeTab === 'evaluation' ? '#0284c7' : '#64748b',
-              boxShadow: activeTab === 'evaluation' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-              borderRadius: '8px',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            {isAdminAuthenticated ? <Unlock size={15} color="#10b981" /> : <Lock size={15} color="#94a3b8" />}
-            AI Evaluation
-            <span
-              style={{
-                fontSize: '10px',
-                fontWeight: 700,
-                padding: '1px 6px',
-                borderRadius: '10px',
-                backgroundColor: isAdminAuthenticated ? '#dcfce7' : '#f1f5f9',
-                color: isAdminAuthenticated ? '#15803d' : '#64748b',
-                marginLeft: '2px',
-              }}
-            >
-              ADMIN
-            </span>
-          </button>
         </nav>
 
         {/* Right Section: Language & Backend Status */}
@@ -1454,12 +1419,13 @@ export default function App() {
 
         {/* TAB 1: VOICE ASSISTANT */}
         {activeTab === 'voice' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px', height: 'calc(100vh - 130px)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px', height: 'calc(100vh - 130px)', minHeight: '520px' }}>
             {/* Chat Box */}
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'column',
+                minHeight: 0,
                 backgroundColor: '#ffffff',
                 borderRadius: '16px',
                 border: '1px solid #e2e8f0',
@@ -2397,210 +2363,6 @@ export default function App() {
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* TAB 5: AI EVALUATION DASHBOARD (ADMIN PROTECTED) */}
-        {activeTab === 'evaluation' && (
-          <div>
-            {!isAdminAuthenticated ? (
-              <div
-                style={{
-                  maxWidth: '520px',
-                  margin: '40px auto',
-                  padding: '36px 32px',
-                  backgroundColor: '#ffffff',
-                  borderRadius: '16px',
-                  boxShadow: '0 4px 20px -2px rgba(0, 0, 0, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.04)',
-                  border: '1px solid #e2e8f0',
-                  textAlign: 'center',
-                }}
-              >
-                <div
-                  style={{
-                    width: '64px',
-                    height: '64px',
-                    borderRadius: '50%',
-                    backgroundColor: '#e0f2fe',
-                    color: '#0284c7',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 18px auto',
-                  }}
-                >
-                  <Lock size={30} />
-                </div>
-
-                <div
-                  style={{
-                    display: 'inline-block',
-                    padding: '3px 12px',
-                    borderRadius: '12px',
-                    backgroundColor: '#fef3c7',
-                    color: '#92400e',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    letterSpacing: '0.05em',
-                    textTransform: 'uppercase',
-                    marginBottom: '10px',
-                  }}
-                >
-                  Restricted Clinical Area
-                </div>
-
-                <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px 0' }}>
-                  Admin Authorization Required
-                </h2>
-                <p style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.6', margin: '0 0 24px 0' }}>
-                  The AI Evaluation Dashboard contains hospital-level audit records, ChromaDB retrieval performance benchmarks, and safety evaluation results. Access is strictly restricted to clinical administrators.
-                </p>
-
-                {adminAuthError && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '12px 14px',
-                      backgroundColor: '#fef2f2',
-                      border: '1px solid #fecaca',
-                      borderRadius: '8px',
-                      color: '#b91c1c',
-                      fontSize: '13px',
-                      marginBottom: '18px',
-                      textAlign: 'left',
-                    }}
-                  >
-                    <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-                    <span>{adminAuthError}</span>
-                  </div>
-                )}
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    handleAdminLogin();
-                  }}
-                  style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
-                >
-                  <div style={{ textAlign: 'left' }}>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
-                      Administrator Passkey
-                    </label>
-                    <div style={{ position: 'relative' }}>
-                      <KeyRound
-                        size={16}
-                        color="#94a3b8"
-                        style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}
-                      />
-                      <input
-                        type="password"
-                        value={adminPasskey}
-                        onChange={(e) => setAdminPasskey(e.target.value)}
-                        placeholder="Enter passkey (e.g. admin123)"
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px 10px 38px',
-                          borderRadius: '8px',
-                          border: '1px solid #cbd5e1',
-                          fontSize: '14px',
-                          outline: 'none',
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isVerifyingAdmin}
-                    style={{
-                      width: '100%',
-                      padding: '12px',
-                      backgroundColor: '#0284c7',
-                      color: '#ffffff',
-                      border: 'none',
-                      borderRadius: '8px',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      boxShadow: '0 2px 4px rgba(2, 132, 199, 0.25)',
-                    }}
-                  >
-                    {isVerifyingAdmin ? <Loader2 size={16} className="animate-spin" /> : <Unlock size={16} />}
-                    {isVerifyingAdmin ? 'Verifying Credentials...' : 'Unlock Evaluation Dashboard'}
-                  </button>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '6px' }}>
-                    <span style={{ fontSize: '12px', color: '#94a3b8' }}>Authorized default credentials:</span>
-                    <button
-                      type="button"
-                      onClick={() => handleAdminLogin('admin123')}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#0284c7',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        textDecoration: 'underline',
-                        padding: 0,
-                      }}
-                    >
-                      Use Demo Admin (admin123)
-                    </button>
-                  </div>
-                </form>
-              </div>
-            ) : (
-              <div>
-                {/* Admin Active Session Header Banner */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '10px 18px',
-                    backgroundColor: '#f0fdf4',
-                    border: '1px solid #bbf7d0',
-                    borderRadius: '10px',
-                    marginBottom: '20px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <ShieldCheck size={18} color="#16a34a" />
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
-                      Administrator Access Granted • Full Evaluation Benchmarks & Audit Logs
-                    </span>
-                  </div>
-                  <button
-                    onClick={handleAdminLogout}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '6px 12px',
-                      backgroundColor: '#fee2e2',
-                      color: '#991b1b',
-                      border: '1px solid #fecaca',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <LogOut size={13} /> Exit Admin
-                  </button>
-                </div>
-
-                <EvaluationDashboard apiHost={API_HOST} />
-              </div>
-            )}
           </div>
         )}
       </main>

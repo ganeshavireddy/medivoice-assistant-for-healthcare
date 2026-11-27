@@ -168,19 +168,8 @@ class Department(Base):
 # DATABASE UTILITIES
 # ============================================================================
 
-# Import evaluation models so they register with Base.metadata
-try:
-    import evaluation.models  # noqa: F401
-except Exception as e:
-    logger.warning(f"Evaluation models registration deferred: {e}")
-
-
 def create_db_and_tables():
     """Create all database tables."""
-    try:
-        from evaluation import models as eval_models
-    except Exception as e:
-        logger.warning(f"Evaluation models registration notice: {e}")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created successfully")
 

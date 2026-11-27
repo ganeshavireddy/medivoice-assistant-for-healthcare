@@ -51,7 +51,7 @@ interface MediVoiceDashboardProps {
   appointments: Appointment[];
   doctors: Doctor[];
   reports: MedicalReportItem[];
-  onNavigateTab: (tab: 'home' | 'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments' | 'evaluation') => void;
+  onNavigateTab: (tab: 'home' | 'dashboard' | 'voice' | 'doctors' | 'reports' | 'appointments') => void;
   onQuickVoicePrompt: (prompt: string) => void;
   onCancelAppointment: (id: number) => Promise<void>;
   backendOnline: boolean | null;
@@ -1119,47 +1119,6 @@ export const MediVoiceDashboard: React.FC<MediVoiceDashboardProps> = ({
                 Tele-MANAS 14416
               </a>
             </div>
-          </div>
-
-          {/* 3. AI EVALUATION ACCREDITATION BADGE */}
-          <div
-            onClick={() => onNavigateTab('evaluation')}
-            style={{
-              backgroundColor: '#ffffff',
-              borderRadius: '14px',
-              padding: '16px',
-              border: '1px solid #e2e8f0',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div
-                style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '8px',
-                  backgroundColor: '#f1f5f9',
-                  color: '#475569',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <ShieldCheck size={18} color="#059669" />
-              </div>
-              <div>
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', display: 'block' }}>
-                  {language === 'te' ? 'AI మూల్యాంకన డ్యాష్‌బోర్డ్' : 'AI Evaluation Suite'}
-                </span>
-                <span style={{ fontSize: '11px', color: '#059669', fontWeight: 600 }}>
-                  100% Emergency Recall • RAG Grounded
-                </span>
-              </div>
-            </div>
-            <ChevronRight size={16} color="#94a3b8" />
           </div>
         </div>
       </div>
