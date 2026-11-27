@@ -1,11 +1,9 @@
 /**
- * MediVoice AI - Language Selector Component
- *
- * Provides a bilingual pill selector for English and Telugu.
+ * MediVoice AI - Language Selector (Inline Styles)
  */
 
 import React from 'react';
-import { Globe, Languages } from 'lucide-react';
+import { Languages } from 'lucide-react';
 import { SupportedLanguage } from '../../types/voice';
 
 interface LanguageSelectorProps {
@@ -19,37 +17,46 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   onChange,
   disabled = false,
 }) => {
+  const pill = (lang: SupportedLanguage, label: string, activeBg: string, activeColor: string) => (
+    <button
+      key={lang}
+      type="button"
+      disabled={disabled}
+      onClick={() => onChange(lang)}
+      style={{
+        padding: '4px 12px',
+        fontSize: '12px',
+        fontWeight: 700,
+        borderRadius: '8px',
+        border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        background: language === lang ? activeBg : 'transparent',
+        color: language === lang ? activeColor : '#64748b',
+        transition: 'all 0.2s',
+        fontFamily: 'inherit',
+        boxShadow: language === lang ? `0 2px 8px ${activeBg}60` : 'none',
+      }}
+    >
+      {label}
+    </button>
+  );
+
   return (
-    <div className="inline-flex items-center gap-1.5 p-1 bg-slate-900/80 border border-slate-700/80 rounded-xl backdrop-blur-sm shadow-inner">
-      <div className="pl-2 pr-1 text-slate-400 flex items-center gap-1 text-xs font-medium">
-        <Languages className="w-3.5 h-3.5 text-blue-400" />
-      </div>
-
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onChange('en')}
-        className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
-          language === 'en'
-            ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 font-bold'
-            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-      >
-        English (EN)
-      </button>
-
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => onChange('te')}
-        className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
-          language === 'te'
-            ? 'bg-teal-600 text-white shadow-md shadow-teal-600/30 font-bold'
-            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-      >
-        తెలుగు (TE)
-      </button>
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        padding: '4px',
+        background: 'rgba(15,23,42,0.8)',
+        border: '1px solid #334155',
+        borderRadius: '12px',
+      }}
+    >
+      <Languages size={13} style={{ color: '#3b82f6', marginLeft: '6px' }} />
+      {pill('en', 'English (EN)', '#2563eb', '#fff')}
+      {pill('te', 'తెలుగు (TE)', '#0d9488', '#fff')}
     </div>
   );
 };

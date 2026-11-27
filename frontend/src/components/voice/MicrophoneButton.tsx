@@ -1,20 +1,9 @@
 /**
- * MediVoice AI - Microphone Control Button
- *
- * Large, accessible circular microphone controller featuring state-driven
- * animations, hover glows, and distinct visual feedback per voice state.
+ * MediVoice AI - Microphone Control Button (Inline Styles)
  */
 
 import React from 'react';
-import {
-  Mic,
-  Square,
-  Loader2,
-  Volume2,
-  Sparkles,
-  AlertCircle,
-  RefreshCw,
-} from 'lucide-react';
+import { Mic, Square, Loader2, Volume2, AlertCircle, RefreshCw } from 'lucide-react';
 import { VoiceState } from '../../types/voice';
 
 interface MicrophoneButtonProps {
@@ -34,75 +23,67 @@ export const MicrophoneButton: React.FC<MicrophoneButtonProps> = ({
   const isProcessing = state === 'TRANSCRIBING' || state === 'PROCESSING';
   const isSpeaking = state === 'SPEAKING';
   const isError = state === 'ERROR';
-  const isPermRequest = state === 'REQUESTING_PERMISSION';
 
-  // State-specific button styling and animations
-  const getButtonStyles = () => {
-    if (isRecording) {
-      return 'bg-gradient-to-tr from-rose-600 to-red-500 text-white shadow-[0_0_35px_rgba(239,68,68,0.6)] ring-4 ring-rose-400/40 animate-pulse scale-105';
-    }
-    if (isProcessing) {
-      return 'bg-gradient-to-tr from-indigo-600 to-violet-600 text-white shadow-[0_0_30px_rgba(99,102,241,0.5)] ring-4 ring-indigo-400/30';
-    }
-    if (isSpeaking) {
-      return 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-[0_0_30px_rgba(16,185,129,0.5)] ring-4 ring-emerald-400/30';
-    }
-    if (isPermRequest) {
-      return 'bg-gradient-to-tr from-amber-600 to-yellow-500 text-white shadow-[0_0_25px_rgba(245,158,11,0.5)] ring-4 ring-amber-400/30';
-    }
-    if (isError) {
-      return 'bg-gradient-to-tr from-rose-700 to-red-600 text-white shadow-[0_0_20px_rgba(225,29,72,0.4)] ring-4 ring-rose-500/20';
-    }
-    // IDLE
-    return 'bg-gradient-to-tr from-blue-600 via-indigo-600 to-teal-500 text-white shadow-[0_0_30px_rgba(59,130,246,0.4)] hover:shadow-[0_0_40px_rgba(59,130,246,0.7)] hover:scale-105 active:scale-95 ring-4 ring-blue-500/20';
+  const getBg = () => {
+    if (isRecording) return 'linear-gradient(135deg, #dc2626, #ef4444)';
+    if (isProcessing) return 'linear-gradient(135deg, #4f46e5, #7c3aed)';
+    if (isSpeaking) return 'linear-gradient(135deg, #059669, #0d9488)';
+    if (isError) return 'linear-gradient(135deg, #be123c, #dc2626)';
+    return 'linear-gradient(135deg, #2563eb, #0d9488)';
   };
 
-  const getButtonIcon = () => {
-    if (isRecording) {
-      return <Square className="w-8 h-8 fill-current text-white animate-pulse" />;
-    }
-    if (isProcessing || isPermRequest) {
-      return <Loader2 className="w-9 h-9 animate-spin text-white" />;
-    }
-    if (isSpeaking) {
-      return <Volume2 className="w-9 h-9 animate-bounce text-white" />;
-    }
-    if (isError) {
-      return <RefreshCw className="w-8 h-8 text-white" />;
-    }
-    return <Mic className="w-9 h-9 text-white transition-transform group-hover:scale-110" />;
+  const getGlow = () => {
+    if (isRecording) return '0 0 30px rgba(239,68,68,0.6), 0 0 60px rgba(239,68,68,0.2)';
+    if (isProcessing) return '0 0 25px rgba(99,102,241,0.5)';
+    if (isSpeaking) return '0 0 25px rgba(16,185,129,0.5)';
+    if (isError) return '0 0 20px rgba(220,38,38,0.4)';
+    return '0 0 25px rgba(37,99,235,0.4)';
+  };
+
+  const getIcon = () => {
+    if (isRecording) return <Square size={30} style={{ fill: '#fff', color: '#fff' }} />;
+    if (isProcessing) return <Loader2 size={30} style={{ color: '#fff', animation: 'spin 1s linear infinite' }} />;
+    if (isSpeaking) return <Volume2 size={30} style={{ color: '#fff' }} />;
+    if (isError) return <RefreshCw size={28} style={{ color: '#fff' }} />;
+    return <Mic size={30} style={{ color: '#fff' }} />;
   };
 
   const getLabel = () => {
-    if (isRecording) {
-      return language === 'te' ? 'ఆపండి (పూర్తయింది)' : 'Stop Recording';
-    }
-    if (state === 'REQUESTING_PERMISSION') {
-      return language === 'te' ? 'అనుమతి అడుగుతోంది...' : 'Allow Microphone...';
-    }
-    if (state === 'TRANSCRIBING') {
-      return language === 'te' ? 'టెక్స్ట్‌గా మారుస్తోంది...' : 'Transcribing Speech...';
-    }
-    if (state === 'PROCESSING') {
-      return language === 'te' ? 'ఆలోచిస్తోంది...' : 'Consulting Doctor Agent...';
-    }
-    if (state === 'SPEAKING') {
-      return language === 'te' ? 'చదువుతోంది...' : 'Speaking Response...';
-    }
-    if (isError) {
-      return language === 'te' ? 'మళ్లీ ప్రయత్నించండి' : 'Retry Speaking';
-    }
+    if (isRecording) return language === 'te' ? 'ఆపండి' : 'Stop Recording';
+    if (state === 'REQUESTING_PERMISSION') return language === 'te' ? 'అనుమతి...' : 'Allow Mic...';
+    if (state === 'TRANSCRIBING') return language === 'te' ? 'మారుస్తోంది...' : 'Transcribing...';
+    if (state === 'PROCESSING') return language === 'te' ? 'ఆలోచిస్తోంది...' : 'Processing...';
+    if (state === 'SPEAKING') return language === 'te' ? 'చదువుతోంది...' : 'Speaking...';
+    if (isError) return language === 'te' ? 'మళ్లీ ప్రయత్నించండి' : 'Retry';
     return language === 'te' ? 'మాట్లాడటానికి నొక్కండి' : 'Tap to Speak';
   };
 
   return (
-    <div className="flex flex-col items-center justify-center gap-2">
-      <div className="relative group">
-        {/* Pulsing Ripple Rings for Recording */}
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+      <div style={{ position: 'relative' }}>
+        {/* Ripple rings when recording */}
         {isRecording && (
           <>
-            <span className="absolute -inset-2 rounded-full bg-rose-500/30 animate-ping opacity-75 duration-1000" />
-            <span className="absolute -inset-4 rounded-full bg-rose-400/20 animate-pulse duration-1500" />
+            <span
+              style={{
+                position: 'absolute',
+                inset: '-10px',
+                borderRadius: '50%',
+                background: 'rgba(239,68,68,0.25)',
+                animation: 'ping 1.2s ease-out infinite',
+                pointerEvents: 'none',
+              }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                inset: '-18px',
+                borderRadius: '50%',
+                background: 'rgba(239,68,68,0.12)',
+                animation: 'ping 1.6s ease-out infinite 0.3s',
+                pointerEvents: 'none',
+              }}
+            />
           </>
         )}
 
@@ -111,17 +92,51 @@ export const MicrophoneButton: React.FC<MicrophoneButtonProps> = ({
           onClick={onClick}
           disabled={disabled || isProcessing}
           aria-label={getLabel()}
-          className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-offset-2 focus:ring-offset-slate-900 cursor-pointer ${getButtonStyles()} ${
-            disabled || isProcessing ? 'opacity-80 cursor-wait' : ''
-          }`}
+          style={{
+            position: 'relative',
+            zIndex: 1,
+            width: 72,
+            height: 72,
+            borderRadius: '50%',
+            border: 'none',
+            background: getBg(),
+            boxShadow: getGlow(),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: disabled || isProcessing ? 'wait' : 'pointer',
+            opacity: disabled && !isProcessing ? 0.7 : 1,
+            transition: 'all 0.25s ease',
+            outline: 'none',
+            transform: isRecording ? 'scale(1.08)' : 'scale(1)',
+          }}
         >
-          {getButtonIcon()}
+          {getIcon()}
         </button>
       </div>
 
-      <span className="text-xs font-semibold text-slate-300 tracking-wide mt-1">
+      <span
+        style={{
+          fontSize: '11px',
+          fontWeight: 600,
+          color: isRecording ? '#fca5a5' : '#94a3b8',
+          letterSpacing: '0.03em',
+          textAlign: 'center',
+        }}
+      >
         {getLabel()}
       </span>
+
+      <style>{`
+        @keyframes ping {
+          0% { transform: scale(1); opacity: 0.7; }
+          100% { transform: scale(1.6); opacity: 0; }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };

@@ -1,26 +1,9 @@
 /**
- * MediVoice AI - Master Voice Assistant Component
- *
- * Full, production-ready bilingual voice interface combining state-driven
- * microphone controls, live audio frequency visualization, structured
- * clinical conversation messages, and text-based fallback.
+ * MediVoice AI - Master Voice Assistant Component (Inline Styles — No Tailwind)
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import {
-  Mic,
-  Send,
-  Trash2,
-  Volume2,
-  VolumeX,
-  Stethoscope,
-  Sparkles,
-  ShieldAlert,
-  Calendar,
-  Heart,
-  Activity,
-  AlertCircle,
-} from 'lucide-react';
+import { Mic, Send, Trash2, Volume2, VolumeX, Stethoscope } from 'lucide-react';
 import { SupportedLanguage } from '../../types/voice';
 import { useVoiceAssistant } from '../../hooks/useVoiceAssistant';
 import { MicrophoneButton } from './MicrophoneButton';
@@ -47,7 +30,6 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
     language,
     messages,
     statusMessage,
-    errorMessage,
     autoSpeak,
     frequencyData,
     durationSeconds,
@@ -62,13 +44,8 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
     speakMessage,
     stopSpeaking,
     clearConversation,
-  } = useVoiceAssistant({
-    initialLanguage,
-    userId,
-    onAppointmentBooked,
-  });
+  } = useVoiceAssistant({ initialLanguage, userId, onAppointmentBooked });
 
-  // Auto-scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, state]);
@@ -89,28 +66,96 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
   };
 
   const handleQuickAction = (promptText: string, actionLang?: SupportedLanguage) => {
-    if (actionLang && actionLang !== language) {
-      setLanguage(actionLang);
-    }
+    if (actionLang && actionLang !== language) setLanguage(actionLang);
     sendTextMessage(promptText);
   };
 
+  // Status dot color
+  const dotColor =
+    state === 'RECORDING'
+      ? '#ef4444'
+      : state === 'PROCESSING' || state === 'TRANSCRIBING'
+      ? '#f59e0b'
+      : state === 'SPEAKING'
+      ? '#10b981'
+      : '#3b82f6';
+
   return (
-    <div className="w-full max-w-5xl mx-auto flex flex-col h-[calc(100vh-140px)] min-h-[640px] bg-slate-950 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden">
-      {/* 1. Header Bar */}
-      <header className="px-6 py-4 bg-slate-900/90 border-b border-slate-800/80 flex items-center justify-between gap-4 backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
-            <Stethoscope className="w-5 h-5" />
+    <div
+      style={{
+        width: '100%',
+        maxWidth: '960px',
+        margin: '0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        height: 'calc(100vh - 140px)',
+        minHeight: '640px',
+        background: '#0f172a',
+        border: '1px solid #1e293b',
+        borderRadius: '20px',
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+        overflow: 'hidden',
+        fontFamily: 'inherit',
+      }}
+    >
+      {/* ── Header ── */}
+      <header
+        style={{
+          padding: '14px 24px',
+          background: '#1e293b',
+          borderBottom: '1px solid #334155',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: '12px',
+              background: 'linear-gradient(135deg, #2563eb, #0d9488)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fff',
+              boxShadow: '0 4px 14px rgba(37,99,235,0.3)',
+              flexShrink: 0,
+            }}
+          >
+            <Stethoscope size={20} />
           </div>
           <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <h2
+              style={{
+                margin: 0,
+                fontSize: '15px',
+                fontWeight: 700,
+                color: '#f1f5f9',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
               MediVoice AI
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 border border-teal-500/30">
+              <span
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: '20px',
+                  background: 'rgba(13,148,136,0.2)',
+                  color: '#5eead4',
+                  border: '1px solid rgba(13,148,136,0.3)',
+                }}
+              >
                 Voice Assistant
               </span>
             </h2>
-            <p className="text-xs text-slate-400">
+            <p style={{ margin: 0, fontSize: '12px', color: '#94a3b8' }}>
               {language === 'te'
                 ? 'క్లినికల్ ట్రయేజ్ మరియు అపాయింట్‌మెంట్ అసిస్టెంట్'
                 : 'Bilingual Clinical Triage & Smart Scheduling'}
@@ -118,42 +163,62 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Language Switcher */}
-          <LanguageSelector
-            language={language}
-            onChange={setLanguage}
-            disabled={state === 'RECORDING'}
-          />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <LanguageSelector language={language} onChange={setLanguage} disabled={state === 'RECORDING'} />
 
-          {/* Auto-TTS Toggle */}
           <button
             type="button"
             onClick={() => setAutoSpeak(!autoSpeak)}
-            title={autoSpeak ? 'Auto-speak responses is enabled' : 'Auto-speak is disabled'}
-            className={`p-2 rounded-xl border transition ${
-              autoSpeak
-                ? 'bg-blue-600/20 border-blue-500/30 text-blue-400 hover:bg-blue-600/30'
-                : 'bg-slate-800/80 border-slate-700 text-slate-500 hover:bg-slate-800'
-            }`}
+            title={autoSpeak ? 'Auto-speak ON' : 'Auto-speak OFF'}
+            style={{
+              padding: '8px',
+              borderRadius: '10px',
+              border: `1px solid ${autoSpeak ? 'rgba(59,130,246,0.4)' : '#334155'}`,
+              background: autoSpeak ? 'rgba(59,130,246,0.15)' : 'rgba(30,41,59,0.8)',
+              color: autoSpeak ? '#93c5fd' : '#64748b',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+            }}
           >
-            {autoSpeak ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            {autoSpeak ? <Volume2 size={16} /> : <VolumeX size={16} />}
           </button>
 
-          {/* Clear Session */}
           <button
             type="button"
             onClick={clearConversation}
             title={language === 'te' ? 'సంభాషణను తొలగించండి' : 'Clear conversation'}
-            className="p-2 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 hover:border-rose-800/50 transition cursor-pointer"
+            style={{
+              padding: '8px',
+              borderRadius: '10px',
+              border: '1px solid #334155',
+              background: 'rgba(30,41,59,0.8)',
+              color: '#64748b',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+            }}
           >
-            <Trash2 className="w-4 h-4" />
+            <Trash2 size={16} />
           </button>
         </div>
       </header>
 
-      {/* 2. Scrollable Messages Area */}
-      <main className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+      {/* ── Messages ── */}
+      <main
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '20px 24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+        }}
+      >
         <ConversationMessages
           messages={messages}
           language={language}
@@ -165,9 +230,9 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
         <div ref={messagesEndRef} />
       </main>
 
-      {/* 3. Live Frequency Visualizer (Shown while recording) */}
+      {/* ── Live Visualizer (recording only) ── */}
       {(state === 'RECORDING' || state === 'LISTENING') && (
-        <div className="px-6 pb-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div style={{ padding: '0 24px 8px', flexShrink: 0 }}>
           <AudioVisualizer
             frequencyData={frequencyData}
             durationSeconds={durationSeconds}
@@ -177,79 +242,129 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
         </div>
       )}
 
-      {/* 4. Controls & Input Section */}
-      <footer className="p-4 bg-slate-900/95 border-t border-slate-800/80 flex flex-col gap-3">
-        {/* Status / Error Banner */}
-        <div className="flex items-center justify-between text-xs px-2">
-          <div className="flex items-center gap-2">
+      {/* ── Footer Controls ── */}
+      <footer
+        style={{
+          padding: '12px 24px 16px',
+          background: '#1e293b',
+          borderTop: '1px solid #334155',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          flexShrink: 0,
+        }}
+      >
+        {/* Status bar */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '12px',
+            padding: '0 4px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span
-              className={`w-2 h-2 rounded-full ${
-                state === 'RECORDING'
-                  ? 'bg-rose-500 animate-ping'
-                  : state === 'PROCESSING' || state === 'TRANSCRIBING'
-                  ? 'bg-amber-400 animate-pulse'
-                  : state === 'SPEAKING'
-                  ? 'bg-emerald-400'
-                  : 'bg-blue-400'
-              }`}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: dotColor,
+                display: 'inline-block',
+                animation: state === 'RECORDING' ? 'ping 1s infinite' : state === 'PROCESSING' ? 'pulse 1.5s infinite' : 'none',
+              }}
             />
             <span
-              className={`font-medium ${
-                state === 'ERROR'
-                  ? 'text-rose-400'
-                  : state === 'RECORDING'
-                  ? 'text-rose-300 font-bold'
-                  : 'text-slate-400'
-              }`}
+              style={{
+                fontWeight: 600,
+                color:
+                  state === 'ERROR'
+                    ? '#f87171'
+                    : state === 'RECORDING'
+                    ? '#fca5a5'
+                    : '#94a3b8',
+              }}
             >
               {statusMessage}
             </span>
           </div>
-
-          <span className="text-[11px] text-slate-500">
+          <span style={{ fontSize: '11px', color: '#475569' }}>
             {language === 'te' ? 'మైక్రోఫోన్ లేదా టైప్ చేయండి' : 'Microphone or Text Mode'}
           </span>
         </div>
 
-        {/* Quick Action Suggestion Chips */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs scrollbar-none">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+        {/* Quick action chips */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            overflowX: 'auto',
+            paddingBottom: '2px',
+          }}
+        >
+          <span
+            style={{
+              fontSize: '10px',
+              fontWeight: 700,
+              color: '#475569',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {language === 'te' ? 'త్వరిత చర్యలు:' : 'Quick Actions:'}
           </span>
-          <button
-            type="button"
-            onClick={() => handleQuickAction('Schedule appointment for general checkup tomorrow at 10 AM', 'en')}
-            className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 whitespace-nowrap transition cursor-pointer"
-          >
-            📅 Book Checkup
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQuickAction('I want to consult Dr. Sarah Smith in Cardiology', 'en')}
-            className="px-2.5 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 whitespace-nowrap transition cursor-pointer"
-          >
-            ❤️ Cardiology (Dr. Sarah)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQuickAction('నాకు తీవ్రమైన ఛాతీ నొప్పి మరియు చెమటలు పడుతున్నాయి', 'te')}
-            className="px-2.5 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-800/40 whitespace-nowrap transition cursor-pointer"
-          >
-            🚨 తెలుగు: ఛాతీ నొప్పి (Emergency)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQuickAction('డాక్టర్ ప్రియా పటేల్‌తో అపాయింట్‌మెంట్ బుక్ చేయండి', 'te')}
-            className="px-2.5 py-1 rounded-lg bg-teal-950/40 hover:bg-teal-900/50 text-teal-300 border border-teal-800/40 whitespace-nowrap transition cursor-pointer"
-          >
-            🗣️ తెలుగు: అపాయింట్‌మెంట్ బుక్
-          </button>
+          {[
+            {
+              label: '📅 Book Checkup',
+              prompt: 'Schedule appointment for general checkup tomorrow at 10 AM',
+              lang: 'en' as SupportedLanguage,
+              style: { background: 'rgba(30,41,59,0.9)', color: '#cbd5e1', border: '1px solid #334155' },
+            },
+            {
+              label: '❤️ Cardiology (Dr. Sarah)',
+              prompt: 'I want to consult Dr. Sarah Smith in Cardiology',
+              lang: 'en' as SupportedLanguage,
+              style: { background: 'rgba(30,41,59,0.9)', color: '#cbd5e1', border: '1px solid #334155' },
+            },
+            {
+              label: '🚨 తెలుగు: ఛాతీ నొప్పి (Emergency)',
+              prompt: 'నాకు తీవ్రమైన ఛాతీ నొప్పి మరియు చెమటలు పడుతున్నాయి',
+              lang: 'te' as SupportedLanguage,
+              style: { background: 'rgba(69,10,10,0.5)', color: '#fca5a5', border: '1px solid rgba(185,28,28,0.4)' },
+            },
+            {
+              label: '🗣️ తెలుగు: అపాయింట్‌మెంట్',
+              prompt: 'డాక్టర్ ప్రియా పటేల్‌తో అపాయింట్‌మెంట్ బుక్ చేయండి',
+              lang: 'te' as SupportedLanguage,
+              style: { background: 'rgba(4,47,46,0.5)', color: '#99f6e4', border: '1px solid rgba(13,148,136,0.4)' },
+            },
+          ].map((chip) => (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={() => handleQuickAction(chip.prompt, chip.lang)}
+              style={{
+                ...chip.style,
+                padding: '4px 10px',
+                borderRadius: '8px',
+                fontSize: '11px',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                fontFamily: 'inherit',
+              }}
+            >
+              {chip.label}
+            </button>
+          ))}
         </div>
 
-        {/* Dual Input Area: Central Mic + Fallback Text Bar */}
-        <div className="flex items-center gap-3">
-          {/* Circular Microphone Controller */}
-          <div className="flex-shrink-0">
+        {/* Input row: mic + text */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ flexShrink: 0 }}>
             <MicrophoneButton
               state={state}
               onClick={handleMicClick}
@@ -258,8 +373,10 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
             />
           </div>
 
-          {/* Fallback Text Input Bar */}
-          <form onSubmit={handleTextSubmit} className="flex-1 flex items-center gap-2">
+          <form
+            onSubmit={handleTextSubmit}
+            style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}
+          >
             <input
               type="text"
               value={textInput}
@@ -270,14 +387,38 @@ export const VoiceAssistant: React.FC<VoiceAssistantProps> = ({
                   ? 'లక్షణాలు నమోదు చేయండి లేదా డాక్టర్‌ను వెతకండి...'
                   : 'Ask a medical question, describe symptoms, or book doctor...'
               }
-              className="flex-1 px-4 py-3 bg-slate-900 border border-slate-800 focus:border-blue-500 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none transition shadow-inner"
+              style={{
+                flex: 1,
+                padding: '11px 16px',
+                background: '#0f172a',
+                border: '1px solid #334155',
+                borderRadius: '14px',
+                color: '#f1f5f9',
+                fontSize: '13px',
+                fontFamily: 'inherit',
+                outline: 'none',
+                transition: 'border-color 0.2s',
+              }}
             />
             <button
               type="submit"
               disabled={!textInput.trim() || state === 'PROCESSING' || state === 'RECORDING'}
-              className="px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl transition shadow-md shadow-blue-600/30 flex items-center justify-center cursor-pointer"
+              style={{
+                padding: '11px 16px',
+                background: '#2563eb',
+                border: 'none',
+                borderRadius: '14px',
+                color: '#fff',
+                cursor: textInput.trim() ? 'pointer' : 'not-allowed',
+                opacity: !textInput.trim() || state === 'PROCESSING' || state === 'RECORDING' ? 0.4 : 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s',
+                boxShadow: '0 4px 14px rgba(37,99,235,0.3)',
+              }}
             >
-              <Send className="w-4 h-4" />
+              <Send size={16} />
             </button>
           </form>
         </div>

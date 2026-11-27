@@ -1,14 +1,12 @@
 /**
- * MediVoice AI - Audio Visualizer Component
- *
- * Renders 8 dynamic frequency bars and active voice pulse indicator.
+ * MediVoice AI - Audio Visualizer Component (Inline Styles)
  */
 
 import React from 'react';
-import { Mic, Radio } from 'lucide-react';
+import { Mic } from 'lucide-react';
 
 interface AudioVisualizerProps {
-  frequencyData: number[]; // 8 normalized values [0.0 - 1.0]
+  frequencyData: number[];
   durationSeconds: number;
   volumeLevel: number;
   language: 'en' | 'te';
@@ -22,88 +20,134 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 }) => {
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
-    const remaining = secs % 60;
-    return `${mins.toString().padStart(2, '0')}:${remaining.toString().padStart(2, '0')}`;
+    const rem = secs % 60;
+    return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
   };
 
   const hasVoice = volumeLevel > 0.08;
 
   return (
-    <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl backdrop-blur-md transition-all">
-      <div className="flex items-center justify-between mb-3 px-1">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-3 w-3">
-            <span
-              className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                hasVoice ? 'bg-emerald-400' : 'bg-rose-400'
-              }`}
-            />
-            <span
-              className={`relative inline-flex rounded-full h-3 w-3 ${
-                hasVoice ? 'bg-emerald-500' : 'bg-rose-500'
-              }`}
-            />
-          </span>
-          <span className="text-xs font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-            <Radio className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
+    <div
+      style={{
+        width: '100%',
+        background: 'rgba(15,23,42,0.95)',
+        border: '1px solid #1e293b',
+        borderRadius: '14px',
+        padding: '12px 16px',
+        boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+      }}
+    >
+      {/* Top row */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: '10px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: '50%',
+              background: hasVoice ? '#10b981' : '#ef4444',
+              display: 'inline-block',
+              boxShadow: `0 0 8px ${hasVoice ? '#10b981' : '#ef4444'}`,
+            }}
+          />
+          <span style={{ fontSize: '11px', fontWeight: 700, color: '#e2e8f0', textTransform: 'uppercase', letterSpacing: '0.07em', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <Mic size={12} style={{ color: '#f87171' }} />
             {language === 'te' ? 'మైక్రోఫోన్ ఆక్టివ్' : 'Live Voice Capture'}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span
-            className={`text-xs px-2.5 py-0.5 rounded-full font-medium transition-colors ${
-              hasVoice
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                : 'bg-slate-800 text-slate-400'
-            }`}
+            style={{
+              fontSize: '11px',
+              padding: '2px 10px',
+              borderRadius: '20px',
+              fontWeight: 600,
+              background: hasVoice ? 'rgba(16,185,129,0.15)' : 'rgba(30,41,59,0.8)',
+              color: hasVoice ? '#6ee7b7' : '#94a3b8',
+              border: `1px solid ${hasVoice ? 'rgba(16,185,129,0.3)' : '#334155'}`,
+            }}
           >
             {hasVoice
-              ? language === 'te'
-                ? 'స్వరం గుర్తించబడింది'
-                : 'Voice Detected'
-              : language === 'te'
-              ? 'మాట్లాడండి...'
-              : 'Listening...'}
+              ? language === 'te' ? 'స్వరం గుర్తించబడింది' : '● Voice Detected'
+              : language === 'te' ? 'మాట్లాడండి...' : 'Listening...'}
           </span>
-          <span className="text-xs font-mono font-bold text-rose-400 bg-rose-950/60 border border-rose-800/40 px-2 py-0.5 rounded-md">
-            {formatTime(durationSeconds)}
+          <span
+            style={{
+              fontSize: '12px',
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              color: '#f87171',
+              background: 'rgba(69,10,10,0.5)',
+              border: '1px solid rgba(185,28,28,0.4)',
+              padding: '2px 8px',
+              borderRadius: '6px',
+            }}
+          >
+            ⏺ {formatTime(durationSeconds)}
           </span>
         </div>
       </div>
 
-      {/* 8 Dynamic Animated Audio Frequency Bars */}
-      <div className="flex items-end justify-center gap-2 h-14 px-4 bg-slate-950/60 rounded-xl py-2 border border-slate-800/60">
+      {/* Frequency bars */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'center',
+          gap: '5px',
+          height: '52px',
+          padding: '6px 12px',
+          background: 'rgba(2,6,23,0.6)',
+          borderRadius: '10px',
+          border: '1px solid #1e293b',
+        }}
+      >
         {frequencyData.map((val, idx) => {
-          // Height between 10% and 100%
-          const heightPercent = Math.max(10, Math.min(100, Math.round(val * 100)));
-          const isHigh = heightPercent > 55;
-
+          const heightPct = Math.max(10, Math.min(100, Math.round(val * 100)));
+          const isHigh = heightPct > 55;
           return (
             <div
               key={idx}
-              className="flex-1 max-w-[14px] flex flex-col justify-end items-center h-full"
+              style={{
+                flex: 1,
+                maxWidth: '14px',
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+              }}
             >
               <div
-                style={{ height: `${heightPercent}%` }}
-                className={`w-full rounded-full transition-all duration-75 ease-out ${
-                  isHigh
-                    ? 'bg-gradient-to-t from-emerald-500 via-teal-400 to-cyan-300 shadow-[0_0_12px_rgba(20,184,166,0.6)]'
-                    : 'bg-gradient-to-t from-blue-600 to-indigo-400'
-                }`}
+                style={{
+                  width: '100%',
+                  height: `${heightPct}%`,
+                  borderRadius: '4px',
+                  transition: 'height 0.07s ease-out',
+                  background: isHigh
+                    ? 'linear-gradient(to top, #10b981, #2dd4bf, #67e8f9)'
+                    : 'linear-gradient(to top, #2563eb, #818cf8)',
+                  boxShadow: isHigh ? '0 0 10px rgba(45,212,191,0.5)' : 'none',
+                }}
               />
             </div>
           );
         })}
       </div>
 
-      <div className="mt-2 text-center">
-        <p className="text-[11px] text-slate-400 font-medium">
-          {language === 'te'
-            ? 'స్పష్టంగా మాట్లాడండి. ఆపడానికి రెడ్ బటన్ నొక్కండి.'
-            : 'Speak naturally into your mic. Press Stop when done.'}
-        </p>
-      </div>
+      <p style={{ margin: '8px 0 0', textAlign: 'center', fontSize: '11px', color: '#64748b' }}>
+        {language === 'te'
+          ? 'స్పష్టంగా మాట్లాడండి. ఆపడానికి రెడ్ బటన్ నొక్కండి.'
+          : 'Speak naturally into your mic. Press Stop when done.'}
+      </p>
     </div>
   );
 };
